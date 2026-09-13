@@ -13,7 +13,9 @@ Phase 0とPhase 1前半を実装済みです。
 - `login`: 専用プロファイル方式の診断用コマンド。現環境ではnoteのログイン状態を再利用できないため主経路にはしない
 - `dry-run`: Git root/origin、原稿・画像・URLをブラウザなしで検証し、`git_verified: true`と`intended_action`を確定
 - `draft`: 既存Chrome用の期限10分・改ざん検知付き固定planを準備。単独ではブラウザを開かず、入力・保存もしない。固定済みtext-only UI契約で新規下書きを実行可能
-- `validate-plan`: browser操作直前にplanの期限・run ID・改ざん・現在の原稿SHA-256を再検査する内部ゲート
+- `inspect`: Aqsh配下の既存noteを変更せずに読み取り、本文全文をGit外のprivate snapshotへ保存
+- `verify`: `note.key`または`note.url`で結び付いたMarkdown正本と、既存noteのタイトル・本文・H2/H3・画像数・重複を比較
+- `validate-plan`: browser操作直前にplanの期限・run ID・改ざん・対象URL・現在の原稿SHA-256を再検査する内部ゲート
 - `recover`: リポジトリ外の実行証跡を読み取り専用で一覧化
 - MarkdownのH1/title解決、HTML変換、見出し・画像・リンク・可視文字数の算出
 - 保存後QA用のタイトル、本文長、見出し、画像数、指紋、重複比較
@@ -50,6 +52,12 @@ npm run aqsh-note -- dry-run articles/_template/article.md
 # 機械判読用JSON
 npm run aqsh-note -- dry-run articles/_template/article.md --json
 
+# Aqsh配下の既存noteを読み取り専用で検査するplanを準備
+npm run aqsh-note -- inspect https://note.com/aqsh/n/<key> --json
+
+# note.keyまたはnote.urlを持つ原稿と既存noteを比較するplanを準備
+npm run aqsh-note -- verify articles/<article-id>/article.md --json
+
 # 失敗時の証跡一覧
 npm run aqsh-note -- recover
 ```
@@ -62,7 +70,7 @@ AqshアカウントではGoogleログインを選ぶと未連携アカウント�
 
 リポジトリの`bin/aqsh-note`は`.nvmrc`と同じNodeを選ぶため、`~/.local/bin`へリンクした後は`aqsh-note doctor`の短い形でも実行できます。
 
-`draft`は既存Chrome用planを準備します。ユーザーが新規下書きを依頼したtext-only原稿は、固定済みUI契約で入力・下書き保存・再読込検証できます。`/notes/new`を開く時点で空の下書き枠が生成され得ます。画像、アイキャッチ、`update / verify / inspect`は停止中です。`publish`コマンドは今後も作りません。
+`draft`、`inspect`、`verify`は既存Chrome用planを準備します。CLI単体ではブラウザを操作せず、Codexの既存Chrome executorがplanを検証してから固定手順を実行します。`inspect`と`verify`は入力・クリック・保存を行わない読み取り専用です。完全な本文snapshotは権限`0600`でGit外へ保存し、標準出力と`result.json`には本文を含めません。ユーザーが新規下書きを依頼したtext-only原稿は、固定済みUI契約で入力・下書き保存・再読込検証できます。`/notes/new`を開く時点で空の下書き枠が生成され得ます。画像、アイキャッチ、既存記事の`update`は停止中です。`publish`コマンドは今後も作りません。
 
 ## 記事の作り方
 
@@ -90,7 +98,7 @@ Git管理するもの:
 Git管理しないもの:
 
 - `~/.cache/aqsh-note/chrome-profile`: 診断用のnote専用Chromeプロファイル（現在は主経路で不使用）
-- `~/.local/state/aqsh-note/runs`: `result.json`、スクリーンショット
+- `~/.local/state/aqsh-note/runs`: `browser-plan.json`、`result.json`、private `snapshot.json`、許可された本文操作のスクリーンショット
 - Cookie、storageState、パスワード、セッション値
 
 設定読み込み時に、Chromeプロファイルとruntime stateがGitリポジトリまたはcontent rootと重なる構成を拒否します。raw Playwright traceは通信ヘッダーやCookieを記録し得るため、全操作で無効です。将来、認証情報を記録しない診断形式を実装・検証するまで有効化しません。

@@ -223,3 +223,101 @@ test("validates every action in a plan before execution", async () => {
     );
   }
 });
+
+test("allows only fixed read-only action sequences for inspect and verify", async () => {
+  const { assertSafeReadUiActionPlan } = await loadSut();
+  assert.equal(typeof assertSafeReadUiActionPlan, "function", "assertSafeReadUiActionPlan must exist");
+  const account = {
+    kind: "verify_account",
+    url: "https://note.com/settings/account/note_id",
+    accountId: "aqsh",
+    field: { name: "urlname", ariaLabel: "note ID", expectedValue: "aqsh", count: 1 }
+  };
+  const contract = {
+    kind: "verify_editor_contract",
+    contract: {
+      version: "note-text-editor-2026-09-v1",
+      title: { strategy: "placeholder", value: "記事タイトル", tag: "textarea", count: 1 },
+      body: {
+        strategy: "role-and-attributes",
+        role: "textbox",
+        tag: "div",
+        contentEditable: "true",
+        ariaMultiline: "true",
+        count: 1
+      },
+      save: { role: "button", name: "下書き保存", exact: true, count: 1 },
+      publish: { role: "button", name: "公開に進む", exact: true, count: 1, forbidden: true }
+    }
+  };
+  const open = {
+    kind: "open_existing_editor",
+    key: "n9b5c6afb2521",
+    url: "https://editor.note.com/notes/n9b5c6afb2521/edit/"
+  };
+
+  for (const mode of ["inspect", "verify"]) {
+    assert.deepEqual(
+      assertSafeReadUiActionPlan([account, open, contract, { kind: mode }], {
+        mode,
+        key: "n9b5c6afb2521"
+      }).map(action => action.kind),
+      ["verify_account", "open_existing_editor", "verify_editor_contract", mode]
+    );
+  }
+});
+
+test("read-only plans reject retargeting and every mutating action", async () => {
+  const { assertSafeReadUiActionPlan } = await loadSut();
+  const account = {
+    kind: "verify_account",
+    url: "https://note.com/settings/account/note_id",
+    accountId: "aqsh",
+    field: { name: "urlname", ariaLabel: "note ID", expectedValue: "aqsh", count: 1 }
+  };
+  const contract = {
+    kind: "verify_editor_contract",
+    contract: {
+      version: "note-text-editor-2026-09-v1",
+      title: { strategy: "placeholder", value: "記事タイトル", tag: "textarea", count: 1 },
+      body: {
+        strategy: "role-and-attributes",
+        role: "textbox",
+        tag: "div",
+        contentEditable: "true",
+        ariaMultiline: "true",
+        count: 1
+      },
+      save: { role: "button", name: "下書き保存", exact: true, count: 1 },
+      publish: { role: "button", name: "公開に進む", exact: true, count: 1, forbidden: true }
+    }
+  };
+
+  for (const actions of [
+    [
+      account,
+      {
+        kind: "open_existing_editor",
+        key: "n9b5c6afb2521",
+        url: "https://editor.note.com/notes/n111111111111/edit/"
+      },
+      contract,
+      { kind: "inspect" }
+    ],
+    [
+      account,
+      {
+        kind: "open_existing_editor",
+        key: "n9b5c6afb2521",
+        url: "https://editor.note.com/notes/n9b5c6afb2521/edit/"
+      },
+      contract,
+      { kind: "save_draft", accessibleName: "下書き保存" }
+    ]
+  ]) {
+    assert.throws(
+      () => assertSafeReadUiActionPlan(actions, { mode: "inspect", key: "n9b5c6afb2521" }),
+      error => error?.code === "UI_ACTION_INVALID" || error?.code === "UI_ACTION_PLAN_INVALID"
+    );
+  }
+});

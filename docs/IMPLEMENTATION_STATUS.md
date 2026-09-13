@@ -38,6 +38,8 @@
 - [x] 現行text-onlyエディタのURL・title・body・保存・公開禁止コントロールを`note-text-editor-2026-09-v1`として固定
 - [x] 保存後観測のrun ID拘束と、観測不能時の`saved: unknown`監査記録
 - [x] `validate-plan`による操作直前の期限・run・plan改ざん・原稿SHA-256再検査
+- [x] `inspect`の読み取り専用plan、private snapshot、本文非反射result
+- [x] `verify`の原稿SHA拘束planと、title・全文・H2/H3・画像数・指紋・重複比較
 
 ## 外部環境で確認中
 
@@ -48,12 +50,12 @@
 - [x] 明示的な`下書き保存`と「下書きを保存しました」表示
 - [x] 保存後の`editor.note.com`編集URLと記事key
 - [x] text-only下書き1件の保存後QA（全文662文字、H2×2、H3×1、画像0、重複なし）
+- [x] 既存下書き1件のread-only `inspect`実アカウントE2E（全文662文字、H2×2、H3×1、画像0、ブラウザ変更なし）
+- [x] 同下書きとGit正本のread-only `verify`実アカウントE2E（全比較一致、重複なし、ブラウザ変更なし）
 
 ## 後続フェーズ
 
 - [ ] `draft`の本番経路
-- [ ] `inspect`
-- [ ] `verify`
 - [ ] 既存下書きの競合検知と`update`
 - [ ] 本文画像3方式のPoCと10回連続E2E
 - [ ] アイキャッチ
@@ -62,4 +64,4 @@
 
 ## 現在のゲート
 
-text-only新規下書き経路は既存Chromeの実アカウントE2Eまで完了しました。`/notes/new`への遷移だけでも編集URLと空の下書き枠が生成され得るため、ユーザーが新規下書きを依頼した対象原稿だけを扱い、期限内planの固定schema・固定順序以外は使いません。画像、アイキャッチ、既存記事更新、`update / verify / inspect`は停止中で、公開操作はゲート解除の対象外です。
+text-only新規下書きと、既存下書きのread-only `inspect / verify`は、既存Chromeの実アカウントE2Eまで完了しました。`inspect / verify`は対象keyを固定し、入力・クリック・保存を含まない4 actionだけを許可します。`/notes/new`への遷移だけでも編集URLと空の下書き枠が生成され得るため、ユーザーが新規下書きを依頼した対象原稿だけを扱い、期限内planの固定schema・固定順序以外は使いません。画像、アイキャッチ、既存記事更新、`update`は停止中で、公開操作はゲート解除の対象外です。

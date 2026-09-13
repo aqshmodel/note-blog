@@ -4,7 +4,7 @@
 
 ## 現在のhard stop
 
-`draft`はaction別schemaと固定順序を持つ期限付きplanを生成する。text-only新規エディタ契約は`note-text-editor-2026-09-v1`として固定し、実アカウントでHTML貼付、明示保存、再読込QAまで確認済みである。ユーザーが対象原稿の新規下書きを依頼した場合、タイトル・本文入力、`下書き保存`、再読込検証を行える。画像、アイキャッチ、既存記事更新、`update / verify / inspect`は停止したままとする。
+`draft / inspect / verify`はaction別schemaと固定順序を持つ期限付きplanを生成する。text-onlyエディタ契約は`note-text-editor-2026-09-v1`として固定し、実アカウントで新規下書きのHTML貼付・明示保存・再読込QAと、既存下書きのread-only検査・Git正本比較まで確認済みである。画像、アイキャッチ、既存記事更新、`update`は停止したままとする。
 
 HTML貼付で確認済みの書式は段落、H2、H3、箇条書きである。インラインcode要素は文字を保ったままプレーンテキスト化されたため、記事原稿ではその装飾に依存しない。
 
@@ -16,7 +16,7 @@ HTML貼付で確認済みの書式は段落、H2、H3、箇条書きである。
 4. URL不一致、0件、複数件、別ID、ログイン画面への転送では停止する。
 5. ページ全体を取得せず、上記入力欄だけを読む。可視UIが一時的なツール文脈へ入る可能性はあるが、メールアドレス、パスワード、Cookie、storageStateを永続化・出力しない。
 
-この本人確認は永続的なログイン証明として保存せず、書き込みを伴う実行ごとにやり直す。
+この本人確認は永続的なログイン証明として保存せず、`draft / inspect / verify`の実行ごとにやり直す。
 
 ## 固定済みのtext-only UI契約
 
@@ -46,6 +46,15 @@ HTML貼付で確認済みの書式は段落、H2、H3、箇条書きである。
 6. title入力後は自動保存が始まり得る。途中失敗でもブラウザ状態変更を隠さず、`saved: unknown`の監査結果を残して停止する。
 7. `下書き保存`後に同じ編集URLを再読み込みし、title、全文、H2/H3、画像数、重複をローカル期待値と比較する。観測JSONは`record-draft`で検証・記録する。
 8. locator、保存状態、編集URLのいずれかが曖昧なら停止し、再試行で別の操作を推測しない。
+
+## 読み取り専用のinspect / verify
+
+1. `inspect https://note.com/aqsh/n/<key> --json`または、対象をfrontmatterへ結び付けた原稿で`verify <article.md> --json`を実行する。
+2. `validate-plan <browser-plan.json> --json`で期限、run、改ざん、対象keyとURL、`verify`では現在の原稿SHA-256を再検査する。
+3. planどおりにnote ID `aqsh`を確認し、同じChromeの新しいnote専用タブで固定された`https://editor.note.com/notes/<key>/edit/`だけを開く。
+4. title/body/save/publish要素が固定済みUI契約どおりであることを確認し、タイトル、本文、H2/H3、本文画像数だけを読む。入力、貼付、クリック、保存、再読込は行わない。
+5. exact schemaの観測JSONを`record-inspect`または`record-verify`へ渡す。完全な本文はGit外の`snapshot.json`へ権限`0600`で保存し、標準出力と`result.json`には本文のSHA-256と統計だけを残す。
+6. `verify`で1項目でも不一致なら失敗として停止し、修正や再試行、`update`へ自動移行しない。
 
 ## 証跡と終了
 

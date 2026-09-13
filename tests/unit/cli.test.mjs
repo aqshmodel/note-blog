@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
 const cliPath = path.resolve("bin/aqsh-note.mjs");
@@ -55,6 +57,31 @@ cta:
     assert.equal(remote.status, 0, remote.stderr);
   }
   return { projectRoot, configPath, articlePath, stateDir };
+}
+
+async function bindArticle(project, key = "n9b5c6afb2521") {
+  const source = await readFile(project.articlePath, "utf8");
+  await writeFile(
+    project.articlePath,
+    source.replace("status: draft", `status: draft\nnote:\n  key: ${key}`),
+    "utf8"
+  );
+}
+
+function readObservation(overrides = {}) {
+  return {
+    accountId: "aqsh",
+    url: "https://editor.note.com/notes/n9b5c6afb2521/edit/",
+    title: "CLIテスト",
+    text: "これはブラウザを起動しないdry-run用の記事です。",
+    h2: [],
+    h3: [],
+    imageCount: 0,
+    saveControlName: "下書き保存",
+    publishControlName: "公開に進む",
+    mutated: false,
+    ...overrides
+  };
 }
 
 test("dry-run returns machine-readable results and never publishes", async () => {
@@ -591,22 +618,276 @@ test("record-draft preserves an audit result when the post-save observation is i
   assert.equal(saved.browser_state_changed, true);
 });
 
-test("unimplemented update and inspection commands remain fail-closed", async () => {
+test("inspect prepares an expiring read-only plan for a managed note URL", async () => {
   const project = await makeProject();
-  for (const command of ["update", "verify", "inspect"]) {
-    const target = command === "inspect" ? "https://note.com/aqsh/n/n9b5c6afb2521" : project.articlePath;
-    const result = spawnSync(
-      process.execPath,
-      [cliPath, command, target, "--config", project.configPath, "--json"],
-      { cwd: project.projectRoot, encoding: "utf8" }
-    );
+  const result = spawnSync(
+    process.execPath,
+    [
+      cliPath,
+      "inspect",
+      "https://note.com/aqsh/n/n9b5c6afb2521",
+      "--config",
+      project.configPath,
+      "--json"
+    ],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
 
-    assert.equal(result.status, 1);
-    const output = JSON.parse(result.stdout);
-    assert.equal(output.status, "blocked");
-    assert.equal(output.action, command);
-    assert.equal(output.code, "UI_CONTRACT_UNVERIFIED");
-    assert.equal(output.browser_launched, false);
-    assert.equal(output.published, false);
-  }
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.status, "prepared");
+  assert.equal(output.action, "inspect");
+  assert.equal(output.account, "aqsh");
+  assert.equal(output.note.key, "n9b5c6afb2521");
+  assert.equal(output.browser_state_changed, false);
+  assert.equal(output.requires_confirmation, false);
+  assert.equal(output.published, false);
+  const plan = JSON.parse(await readFile(output.plan.path, "utf8"));
+  assert.equal(plan.mode, "inspect");
+  assert.equal(plan.source, null);
+  assert.equal(plan.actions.at(-1).kind, "inspect");
+});
+
+test("inspect rejects note URLs outside the Aqsh account", async () => {
+  const project = await makeProject();
+  const result = spawnSync(
+    process.execPath,
+    [
+      cliPath,
+      "inspect",
+      "https://note.com/other/n/n9b5c6afb2521",
+      "--config",
+      project.configPath,
+      "--json"
+    ],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 1);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.code, "NAVIGATION_FORBIDDEN");
+  assert.equal(output.published, false);
+});
+
+test("verify prepares a source-bound read-only plan for an existing note article", async () => {
+  const project = await makeProject();
+  await bindArticle(project);
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, "verify", project.articlePath, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.status, "prepared");
+  assert.equal(output.action, "verify");
+  assert.equal(output.note.key, "n9b5c6afb2521");
+  assert.equal(output.browser_state_changed, false);
+  assert.equal(output.published, false);
+  const plan = JSON.parse(await readFile(output.plan.path, "utf8"));
+  assert.equal(plan.mode, "verify");
+  assert.equal(plan.source.path, project.articlePath);
+  assert.match(plan.source.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(plan.actions.at(-1).kind, "verify");
+});
+
+test("verify refuses an article without a note target", async () => {
+  const project = await makeProject();
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, "verify", project.articlePath, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 2, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.status, "failed");
+  assert.equal(output.action, "verify");
+  assert.ok(output.errors.some(error => error.code === "UPDATE_TARGET_REQUIRED"));
+  assert.equal(output.browser_state_changed, false);
+  assert.equal(output.published, false);
+});
+
+test("record-inspect writes a private snapshot without reflecting the body", async () => {
+  const project = await makeProject();
+  const preparedProcess = spawnSync(
+    process.execPath,
+    [
+      cliPath,
+      "inspect",
+      "https://note.com/aqsh/n/n9b5c6afb2521",
+      "--config",
+      project.configPath,
+      "--json"
+    ],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+  assert.equal(preparedProcess.status, 0, preparedProcess.stderr);
+  const prepared = JSON.parse(preparedProcess.stdout);
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, "record-inspect", prepared.plan.path, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8", input: JSON.stringify(readObservation()) }
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.status, "success");
+  assert.equal(output.action, "inspect");
+  assert.equal(output.browser_state_changed, false);
+  assert.equal(output.published, false);
+  assert.doesNotMatch(result.stdout, /これはブラウザを起動しないdry-run用の記事です/);
+  const snapshot = JSON.parse(await readFile(output.snapshot.path, "utf8"));
+  assert.equal(snapshot.text, "これはブラウザを起動しないdry-run用の記事です。");
+  assert.equal((await stat(output.snapshot.path)).mode & 0o777, 0o600);
+});
+
+test("record-verify compares a live read-only observation with the source-bound plan", async () => {
+  const project = await makeProject();
+  await bindArticle(project);
+  const preparedProcess = spawnSync(
+    process.execPath,
+    [cliPath, "verify", project.articlePath, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+  assert.equal(preparedProcess.status, 0, preparedProcess.stderr);
+  const prepared = JSON.parse(preparedProcess.stdout);
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, "record-verify", prepared.plan.path, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8", input: JSON.stringify(readObservation()) }
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.status, "success");
+  assert.equal(output.action, "verify");
+  assert.equal(output.verification.ok, true);
+  assert.equal(output.browser_state_changed, false);
+  assert.equal(output.published, false);
+});
+
+test("record-verify rechecks the source after waiting for its observation", async () => {
+  const project = await makeProject();
+  await bindArticle(project);
+  const preparedProcess = spawnSync(
+    process.execPath,
+    [cliPath, "verify", project.articlePath, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+  assert.equal(preparedProcess.status, 0, preparedProcess.stderr);
+  const prepared = JSON.parse(preparedProcess.stdout);
+  const child = spawn(
+    process.execPath,
+    [cliPath, "record-verify", prepared.plan.path, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, stdio: ["pipe", "pipe", "pipe"] }
+  );
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", chunk => { stdout += chunk; });
+  child.stderr.on("data", chunk => { stderr += chunk; });
+
+  await delay(2_000);
+  const source = await readFile(project.articlePath, "utf8");
+  await writeFile(project.articlePath, source.replace("dry-run用の記事です。", "変更後の記事です。"), "utf8");
+  child.stdin.end(JSON.stringify(readObservation()));
+  const status = await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", resolve);
+  });
+
+  assert.equal(status, 2, stderr);
+  const output = JSON.parse(stdout);
+  assert.equal(output.status, "failed");
+  assert.ok(output.errors.some(error => error.code === "BROWSER_PLAN_SOURCE_CHANGED"));
+  assert.equal(output.browser_connected, "unknown");
+  assert.equal(output.published, false);
+});
+
+test("record-inspect rejects an expired plan even when its digest is valid", async () => {
+  const project = await makeProject();
+  const preparedProcess = spawnSync(
+    process.execPath,
+    [
+      cliPath,
+      "inspect",
+      "https://note.com/aqsh/n/n9b5c6afb2521",
+      "--config",
+      project.configPath,
+      "--json"
+    ],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+  assert.equal(preparedProcess.status, 0, preparedProcess.stderr);
+  const prepared = JSON.parse(preparedProcess.stdout);
+  const plan = JSON.parse(await readFile(prepared.plan.path, "utf8"));
+  plan.createdAt = "2020-01-01T00:00:00.000Z";
+  plan.expiresAt = "2020-01-01T00:10:00.000Z";
+  const { sha256: _sha256, ...payload } = plan;
+  plan.sha256 = createHash("sha256").update(JSON.stringify(payload), "utf8").digest("hex");
+  await writeFile(prepared.plan.path, `${JSON.stringify(plan, null, 2)}\n`, "utf8");
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, "record-inspect", prepared.plan.path, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8", input: JSON.stringify(readObservation()) }
+  );
+
+  assert.equal(result.status, 1, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.code, "BROWSER_PLAN_EXPIRED");
+  assert.equal(output.published, false);
+});
+
+test("record-inspect does not claim a browser connection for an invalid observation", async () => {
+  const project = await makeProject();
+  const preparedProcess = spawnSync(
+    process.execPath,
+    [
+      cliPath,
+      "inspect",
+      "https://note.com/aqsh/n/n9b5c6afb2521",
+      "--config",
+      project.configPath,
+      "--json"
+    ],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+  assert.equal(preparedProcess.status, 0, preparedProcess.stderr);
+  const prepared = JSON.parse(preparedProcess.stdout);
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, "record-inspect", prepared.plan.path, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8", input: "{}" }
+  );
+
+  assert.equal(result.status, 2, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.status, "failed");
+  assert.equal(output.browser_connected, "unknown");
+  assert.equal(output.browser_state_changed, false);
+  assert.equal(output.published, false);
+});
+
+test("only the unimplemented update command remains fail-closed", async () => {
+  const project = await makeProject();
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, "update", project.articlePath, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 1);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.status, "blocked");
+  assert.equal(output.action, "update");
+  assert.equal(output.code, "UI_CONTRACT_UNVERIFIED");
+  assert.equal(output.browser_launched, false);
+  assert.equal(output.published, false);
 });

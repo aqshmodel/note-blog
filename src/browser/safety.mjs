@@ -1,5 +1,5 @@
 import { AqshNoteError } from "../errors.mjs";
-import { parseManagedNoteUrl } from "../note-url.mjs";
+import { parseManagedNoteUrl, parseNoteEditorUrl, validateNoteKey } from "../note-url.mjs";
 import { textEditorContract } from "./editor-contract.mjs";
 
 const FORBIDDEN_CONTROL_JA = /(公開|投稿|更新する)/;
@@ -9,8 +9,10 @@ const ALLOWED_ACTION_KINDS = new Set([
   "verify_editor_contract",
   "save_draft",
   "open_new_editor",
+  "open_existing_editor",
   "fill_title",
   "insert_body_html",
+  "inspect",
   "verify"
 ]);
 const DRAFT_ACTION_SEQUENCE = [
@@ -26,9 +28,11 @@ const ACTION_KEYS = {
   verify_account: new Set(["kind", "url", "accountId", "field"]),
   verify_editor_contract: new Set(["kind", "contract"]),
   open_new_editor: new Set(["kind", "url"]),
+  open_existing_editor: new Set(["kind", "url", "key"]),
   fill_title: new Set(["kind", "value"]),
   insert_body_html: new Set(["kind", "html", "plainText"]),
   save_draft: new Set(["kind", "accessibleName"]),
+  inspect: new Set(["kind"]),
   verify: new Set(["kind"])
 };
 
@@ -172,6 +176,20 @@ export function assertSafeUiAction(action) {
     const url = assertAllowedNoteNavigation(action.url, { accountId: "aqsh", purpose: "new-editor" });
     return { kind, url };
   }
+  if (kind === "open_existing_editor") {
+    let editor;
+    let key;
+    try {
+      editor = parseNoteEditorUrl(action.url);
+      key = validateNoteKey(action.key);
+    } catch {
+      throw new AqshNoteError("UI_ACTION_INVALID", "既存noteエディタの操作対象が不正です。");
+    }
+    if (editor.key !== key) {
+      throw new AqshNoteError("UI_ACTION_INVALID", "既存noteエディタのkeyが一致しません。");
+    }
+    return { kind, url: editor.canonicalUrl, key };
+  }
   if (kind === "fill_title") {
     if (typeof action.value !== "string" || !action.value.trim()) {
       throw new AqshNoteError("UI_ACTION_INVALID", "タイトル入力値が不正です。");
@@ -205,4 +223,29 @@ export function assertSafeUiActionPlan(actions) {
     throw new AqshNoteError("UI_ACTION_PLAN_INVALID", "UI操作計画の順序または回数が不正です。");
   }
   return actions.map(action => assertSafeUiAction(action));
+}
+
+export function assertSafeReadUiActionPlan(actions, { mode, key }) {
+  if (!new Set(["inspect", "verify"]).has(mode)) {
+    throw new AqshNoteError("UI_ACTION_PLAN_INVALID", "読み取りUI操作計画の種別が不正です。");
+  }
+  let expectedKey;
+  try {
+    expectedKey = validateNoteKey(key);
+  } catch {
+    throw new AqshNoteError("UI_ACTION_PLAN_INVALID", "読み取りUI操作計画のnote keyが不正です。");
+  }
+  const sequence = ["verify_account", "open_existing_editor", "verify_editor_contract", mode];
+  if (
+    !Array.isArray(actions) ||
+    actions.length !== sequence.length ||
+    actions.some((action, index) => action?.kind !== sequence[index])
+  ) {
+    throw new AqshNoteError("UI_ACTION_PLAN_INVALID", "読み取りUI操作計画の順序または回数が不正です。");
+  }
+  const validated = actions.map(action => assertSafeUiAction(action));
+  if (validated[1].key !== expectedKey) {
+    throw new AqshNoteError("UI_ACTION_PLAN_INVALID", "読み取りUI操作計画の対象keyが一致しません。");
+  }
+  return validated;
 }

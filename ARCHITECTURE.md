@@ -52,7 +52,7 @@ Markdown、画像、Git履歴が正本です。noteは配信先であり、note�
 | Gitリポジトリ | 原稿・画像・コード・設定の正本 |
 | 既存Chrome | 認証済みの実行面。Codexブラウザ連携だけで可視UIを操作し、profile/Cookieは取得しない |
 | note専用profile | 診断用の代替経路。Git外。現環境ではセッション再利用不可のため主経路ではない |
-| runtime state | redaction済み`result.json`と本人確認後の許可済み本文画面だけの証跡。Git外。ログイン・登録・設定・外部画面の撮影とraw Playwright traceは禁止 |
+| runtime state | redaction済み`result.json`、期限付き`browser-plan.json`、権限`0600`の完全本文`snapshot.json`、本人確認後の許可済み本文画面だけの証跡。Git外。ログイン・登録・設定・外部画面の撮影とraw Playwright traceは禁止 |
 | note公開ページ | 読み取り対象。ただし管理対象URLを検証 |
 | note編集画面 | 書き込み対象。既存Chrome内の専用作業タブと、同時実行禁止が必須 |
 | 外部認証画面 | ユーザーによる手動操作のみ。DOMを収集しない |
@@ -69,7 +69,7 @@ Markdown、画像、Git履歴が正本です。noteは配信先であり、note�
 8. 保存後の実画面を読み、ローカル期待値と比較する。
 9. `result.json`へ結果を書き、必ず`published: false`を返す。
 
-現時点ではtitle/body/saveの現行UI契約が未確認のため、手順6以降の書き込みはhard stopである。既存Chromeで許可するのは手順5の狭い本人確認だけで、CLIを迂回した直接入力・保存は行わない。解除には`draft / update / verify / inspect`の有効化と、action別schema・固定順序planを実行直前にも検査するbrowser executorが必要である。
+title/body/save/publish-controlのtext-only UI契約は`note-text-editor-2026-09-v1`として固定済みである。新規`draft`はタイトル・本文入力、`下書き保存`、再読込QAまで、既存noteの`inspect / verify`は入力・クリック・保存なしの読み取りとGit正本比較まで実アカウントで確認済みである。各操作はaction別schemaと固定順序planをbrowser executorが実行直前にも検査する。画像、アイキャッチ、既存記事の`update`はhard stopを維持し、CLIを迂回して操作しない。
 
 認証は投稿ボタンの有無だけでは成立させません。note ID専用設定画面の単一入力欄が`aqsh`と一致した場合だけ、その実行中の管理対象セッションとして受理します。この確認を永続証明へ置き換えません。raw Playwright traceは通信情報を含み得るため生成しません。
 

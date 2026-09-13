@@ -19,6 +19,8 @@
 5. 公開状態を変えずに保存できることが実機確認済みの場合だけupdateする。
 6. verify不一致なら再試行せず停止する。
 
+現時点では手順2のread-only `inspect`と、ローカル原稿を変更しない`verify`まで実行できる。手順3以降で競合がない場合でも、既存noteへの`update`は未実装のため自動実行しない。
+
 ## 成功報告
 
 成功報告には、記事ID、下書きURL、title/body/headings/images/duplicationの検証結果、`published: false`を含める。ブラウザ操作を開始していない場合は、ローカル検証とnote実機検証を区別する。
