@@ -321,3 +321,60 @@ test("read-only plans reject retargeting and every mutating action", async () =>
     );
   }
 });
+
+test("allows only the fixed existing-draft update sequence", async () => {
+  const { assertSafeUpdateUiActionPlan } = await loadSut();
+  assert.equal(typeof assertSafeUpdateUiActionPlan, "function", "assertSafeUpdateUiActionPlan must exist");
+  const actions = [
+    {
+      kind: "verify_account",
+      url: "https://note.com/settings/account/note_id",
+      accountId: "aqsh",
+      field: { name: "urlname", ariaLabel: "note ID", expectedValue: "aqsh", count: 1 }
+    },
+    {
+      kind: "open_existing_editor",
+      key: "n9b5c6afb2521",
+      url: "https://editor.note.com/notes/n9b5c6afb2521/edit/"
+    },
+    {
+      kind: "verify_editor_contract",
+      contract: {
+        version: "note-text-editor-2026-09-v1",
+        title: { strategy: "placeholder", value: "記事タイトル", tag: "textarea", count: 1 },
+        body: {
+          strategy: "role-and-attributes",
+          role: "textbox",
+          tag: "div",
+          contentEditable: "true",
+          ariaMultiline: "true",
+          count: 1
+        },
+        save: { role: "button", name: "下書き保存", exact: true, count: 1 },
+        publish: { role: "button", name: "公開に進む", exact: true, count: 1, forbidden: true }
+      }
+    },
+    { kind: "verify_current", snapshotSha256: "d".repeat(64) },
+    { kind: "fill_title", value: "更新後タイトル" },
+    { kind: "replace_body_html", html: "<p>更新後本文</p>", plainText: "更新後本文" },
+    { kind: "save_draft", accessibleName: "下書き保存" },
+    { kind: "verify" }
+  ];
+
+  assert.deepEqual(
+    assertSafeUpdateUiActionPlan(actions, { key: "n9b5c6afb2521" }).map(action => action.kind),
+    actions.map(action => action.kind)
+  );
+  assert.throws(
+    () => assertSafeUpdateUiActionPlan(actions.filter(action => action.kind !== "verify_current"), {
+      key: "n9b5c6afb2521"
+    }),
+    error => error?.code === "UI_ACTION_PLAN_INVALID"
+  );
+  assert.throws(
+    () => assertSafeUpdateUiActionPlan(actions.map(action => action.kind === "save_draft"
+      ? { ...action, accessibleName: "更新する" }
+      : action), { key: "n9b5c6afb2521" }),
+    error => error?.code === "PUBLISH_CONTROL_FORBIDDEN" || error?.code === "UI_ACTION_INVALID"
+  );
+});

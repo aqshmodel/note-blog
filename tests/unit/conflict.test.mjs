@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -120,18 +121,25 @@ async function readArtifacts({
 }
 
 test("allows an update only when note still matches the verified baseline and local changed", async () => {
-  const { assessSyncConflict } = await loadSut();
+  const { assessSyncConflict, authorizeSyncUpdate } = await loadSut();
   assert.equal(typeof assessSyncConflict, "function", "assessSyncConflict must exist");
+  assert.equal(typeof authorizeSyncUpdate, "function", "authorizeSyncUpdate must exist");
   const artifacts = await readArtifacts();
+  const updatedArticle = article({
+    sourceSha256: "c".repeat(64),
+    text: "概要 更新予定です。",
+    structure: bodyStructure("更新予定です。")
+  });
 
   const output = assessSyncConflict({
-    article: article({
-      sourceSha256: "c".repeat(64),
-      text: "概要 更新予定です。",
-      structure: bodyStructure("更新予定です。")
-    }),
+    article: updatedArticle,
     ...artifacts,
     now: new Date("2026-09-13T11:07:00.000Z")
+  });
+  const authorization = authorizeSyncUpdate({
+    article: updatedArticle,
+    report: output.report,
+    now: new Date("2026-09-13T11:08:00.000Z")
   });
 
   assert.equal(output.result.status, "clear");
@@ -145,6 +153,67 @@ test("allows an update only when note still matches the verified baseline and lo
   assert.equal(output.result.published, false);
   assert.doesNotMatch(JSON.stringify(output.result), /本文です/);
   assert.equal(output.report.baseline.text, "概要\n\n本文です。");
+  assert.equal(authorization.reportSha256, output.report.sha256);
+  assert.equal(authorization.target.key, target.key);
+  assert.equal(authorization.current.snapshotSha256, output.report.current.sha256);
+});
+
+test("does not authorize an expired conflict report", async () => {
+  const { assessSyncConflict, authorizeSyncUpdate } = await loadSut();
+  const artifacts = await readArtifacts();
+  const updatedArticle = article({
+    sourceSha256: "c".repeat(64),
+    text: "概要 更新予定です。",
+    structure: bodyStructure("更新予定です。")
+  });
+  const output = assessSyncConflict({
+    article: updatedArticle,
+    ...artifacts,
+    now: new Date("2026-09-13T11:07:00.000Z")
+  });
+
+  assert.throws(
+    () => authorizeSyncUpdate({
+      article: updatedArticle,
+      report: output.report,
+      now: new Date("2026-09-13T11:16:00.001Z")
+    }),
+    error => error?.code === "UPDATE_PRECONDITION_EXPIRED"
+  );
+});
+
+test("does not trust recomputed allow flags when the embedded note snapshots conflict", async () => {
+  const { assessSyncConflict, authorizeSyncUpdate } = await loadSut();
+  const artifacts = await readArtifacts({ currentText: "概要\n\nnote側で手修正されました。" });
+  const updatedArticle = article({
+    sourceSha256: "c".repeat(64),
+    text: "概要 更新予定です。",
+    structure: bodyStructure("更新予定です。")
+  });
+  const output = assessSyncConflict({
+    article: updatedArticle,
+    ...artifacts,
+    now: new Date("2026-09-13T11:07:00.000Z")
+  });
+  const { sha256: _sha256, ...originalPayload } = output.report;
+  const payload = {
+    ...originalPayload,
+    conflictDetected: false,
+    updateAllowed: true
+  };
+  const forged = {
+    ...payload,
+    sha256: createHash("sha256").update(JSON.stringify(payload), "utf8").digest("hex")
+  };
+
+  assert.throws(
+    () => authorizeSyncUpdate({
+      article: updatedArticle,
+      report: forged,
+      now: new Date("2026-09-13T11:08:00.000Z")
+    }),
+    error => error?.code === "UPDATE_NOT_ALLOWED"
+  );
 });
 
 test("blocks an update when the current note differs from the verified baseline", async () => {

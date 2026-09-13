@@ -45,6 +45,8 @@
 - [x] 同じ表示文字列のリンク先変更、リスト・引用・強調などを含むnote側構造差分のfail-closed判定
 - [x] frontmatterだけのraw source変更とnote描画内容の変更を分離し、不要な本文更新を抑止
 - [x] 全文・構造before/currentを含むGit外・権限`0600`の`conflict-report.json`
+- [x] `update`の非書き込み準備経路（直前のconflict report、current snapshot、原稿SHA-256、記事keyへ拘束した期限10分plan）
+- [x] 本文非反射のbefore/after要約、更新直前snapshot再照合、固定順序、明示承認フラグ、保存後構造QAのローカル実装
 
 ## 外部環境で確認中
 
@@ -62,7 +64,7 @@
 ## 後続フェーズ
 
 - [ ] `draft`の本番経路
-- [ ] 既存下書きの`update`（競合検知は完了、書き込みUI契約は未検証）
+- [ ] 既存下書きの`update`実ブラウザE2E（plan準備と保存後検証は実装済み、書き込みUI契約は未検証）
 - [ ] 本文画像3方式のPoCと10回連続E2E
 - [ ] アイキャッチ
 - [ ] 認証情報を記録しない診断形式（raw Playwright traceの代替）
@@ -70,4 +72,4 @@
 
 ## 現在のゲート
 
-text-only新規下書き、既存下書きのread-only `inspect / verify`、更新前`conflict-check`は、既存Chromeの実アカウントE2Eまで完了しました。`inspect / verify`は対象keyを固定し、入力・クリック・保存を含まない4 actionだけを許可します。snapshot v2は可視文字列とcanonical structureを別々に保持し、`conflict-check`は検証済みbaselineと10分以内の最新inspectを同一記事へ拘束して、リンク先やリスト・引用・強調を含むnote側差分があれば停止します。`update_allowed: true`は競合ゲートの通過だけを表し、書き込み許可ではありません。`/notes/new`への遷移だけでも編集URLと空の下書き枠が生成され得るため、ユーザーが新規下書きを依頼した対象原稿だけを扱い、期限内planの固定schema・固定順序以外は使いません。画像、アイキャッチ、既存記事更新、`update`は停止中で、公開操作はゲート解除の対象外です。
+text-only新規下書き、既存下書きのread-only `inspect / verify`、更新前`conflict-check`は、既存Chromeの実アカウントE2Eまで完了しました。`inspect / verify`は対象keyを固定し、入力・クリック・保存を含まない4 actionだけを許可します。snapshot v2は可視文字列とcanonical structureを別々に保持し、`conflict-check`は検証済みbaselineと10分以内の最新inspectを同一記事へ拘束して、リンク先やリスト・引用・強調を含むnote側差分があれば停止します。`update`は直前のprivate conflict reportと更新直前snapshotへ拘束した期限10分planを準備し、明示承認を要求するところまでローカル実装済みです。実ブラウザへの既存下書き書き込みはE2E未完了のため停止中です。`/notes/new`への遷移だけでも編集URLと空の下書き枠が生成され得るため、ユーザーが新規下書きを依頼した対象原稿だけを扱い、期限内planの固定schema・固定順序以外は使いません。画像、アイキャッチ、既存記事更新の実行は停止中で、公開操作はゲート解除の対象外です。

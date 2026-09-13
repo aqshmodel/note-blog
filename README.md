@@ -16,6 +16,7 @@ Phase 0、Phase 1前半、Phase 4の更新前競合ゲートを実装済みで�
 - `inspect`: Aqsh配下の既存noteを変更せずに読み取り、本文全文と正規化DOM構造をGit外のprivate snapshot v2へ保存
 - `verify`: `note.key`または`note.url`で結び付いたMarkdown正本と、既存noteのタイトル・本文・H2/H3・画像数・正規化DOM構造・重複を比較
 - `conflict-check`: 前回の成功した`verify`を同期基準に、10分以内の`inspect`と比較して、同じ文字列のリンク先変更やリスト・引用・強調の変更を含むnote側の手修正を検知。本文と構造を含む差分根拠はGit外のprivate reportだけへ保存
+- `update`: `update_allowed: true`のprivate conflict reportを現在原稿・記事key・更新直前snapshotへ拘束し、本文を出力しないbefore/after要約と期限10分の既存下書き更新planを準備。単独ではブラウザを開かず、書き込みもしない
 - `validate-plan`: browser操作直前にplanの期限・run ID・改ざん・対象URL・現在の原稿SHA-256を再検査する内部ゲート。verify planはraw sourceと描画内容を別々のSHA-256へ拘束
 - `recover`: リポジトリ外の実行証跡を読み取り専用で一覧化
 - MarkdownのH1/title解決、HTML変換、見出し・画像・リンク・可視文字数・正規化構造の算出
@@ -26,7 +27,7 @@ Phase 0、Phase 1前半、Phase 4の更新前競合ゲートを実装済みで�
 - 設定は既知キーだけを許可し、認証情報・未知キーの混入を拒否
 - frontmatterは`yaml`パーサーへ固定し、`---js`等の実行可能な言語タグを読み込み前に拒否
 
-現行noteエディタのtext-only UI契約は実画面から固定し、非公開下書きのHTML貼付、明示保存、再読込QA、snapshot v2の本文構造検証、既存下書きの更新前競合判定まで実アカウントで確認済みです。画像配置と既存記事への書き込みは引き続き未実装です。未確認のUIを推測して本番アカウントへ書き込まない設計です。詳細は [実装状況](docs/IMPLEMENTATION_STATUS.md) を参照してください。
+現行noteエディタのtext-only UI契約は実画面から固定し、非公開下書きのHTML貼付、明示保存、再読込QA、snapshot v2の本文構造検証、既存下書きの更新前競合判定まで実アカウントで確認済みです。既存下書き更新はplan準備と保存後検証までローカル実装済みですが、実ブラウザでの書き込みは未検証のため停止しています。画像配置も停止中です。未確認のUIを推測して本番アカウントへ書き込まない設計です。詳細は [実装状況](docs/IMPLEMENTATION_STATUS.md) を参照してください。
 
 ## セットアップ
 
@@ -66,6 +67,12 @@ npm run aqsh-note -- conflict-check \
   ~/.local/state/aqsh-note/runs/<current-inspect-run>/snapshot.json \
   --json
 
+# 競合なしのprivate reportから既存下書き更新planだけを準備
+npm run aqsh-note -- update \
+  articles/<article-id>/article.md \
+  ~/.local/state/aqsh-note/runs/<conflict-run>/conflict-report.json \
+  --json
+
 # 失敗時の証跡一覧
 npm run aqsh-note -- recover
 ```
@@ -80,9 +87,9 @@ AqshアカウントではGoogleログインを選ぶと未連携アカウント�
 
 `draft`、`inspect`、`verify`は既存Chrome用planを準備します。CLI単体ではブラウザを操作せず、Codexの既存Chrome executorがplanを検証してから固定手順を実行します。`inspect`と`verify`は入力・クリック・保存を行わない読み取り専用です。完全な本文と正規化DOM構造のsnapshotは権限`0600`でGit外へ保存し、標準出力と`result.json`には本文・構造本体を含めません。
 
-`conflict-check`自体はブラウザを起動しません。原稿の`last_synced_at`以後に成功した`verify` snapshotと、同じアカウント・記事keyに対する10分以内の`inspect` snapshotを指定します。baselineと現在のnoteが違えば`status: conflict`で停止します。一致し、ローカルの描画内容がbaselineから変わっている場合の`update_allowed: true`は「競合ゲートが通った」という意味であり、`update`コマンドやnoteへの書き込みが有効になったという意味ではありません。frontmatterだけの変更はraw source変更として記録しますが、本文更新は不要と判定します。
+`conflict-check`自体はブラウザを起動しません。原稿の`last_synced_at`以後に成功した`verify` snapshotと、同じアカウント・記事keyに対する10分以内の`inspect` snapshotを指定します。baselineと現在のnoteが違えば`status: conflict`で停止します。一致し、ローカルの描画内容がbaselineから変わっている場合だけ`update_allowed: true`になります。`update`はそのprivate report、原稿SHA-256、更新直前snapshot、記事keyに拘束したplanを作りますが、ブラウザ操作は開始しません。Git差分とreport SHA-256を確認したユーザーの明示承認が必要です。frontmatterだけの変更はraw source変更として記録しますが、本文更新は不要と判定します。
 
-ユーザーが新規下書きを依頼したtext-only原稿は、固定済みUI契約で入力・下書き保存・再読込検証できます。`/notes/new`を開く時点で空の下書き枠が生成され得ます。画像、アイキャッチ、既存記事の`update`は停止中です。`publish`コマンドは今後も作りません。
+ユーザーが新規下書きを依頼したtext-only原稿は、固定済みUI契約で入力・下書き保存・再読込検証できます。`/notes/new`を開く時点で空の下書き枠が生成され得ます。既存下書きの`update`は非書き込みplan準備だけ利用可能で、実ブラウザ実行はE2E完了まで停止します。画像とアイキャッチも停止中です。`publish`コマンドは今後も作りません。
 
 ## 記事の作り方
 

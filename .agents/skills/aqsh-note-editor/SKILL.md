@@ -9,7 +9,7 @@ description: Aqshのnote記事をMarkdownとGitを正本として制作し、安
 
 ## 現在のhard stop
 
-`draft / inspect / verify`は、既存Chrome向けの期限10分・改ざん検知付き実行計画を作る。現行のtext-onlyエディタ契約は`note-text-editor-2026-09-v1`としてコード、テスト、実アカウントE2Eで確認済みである。ユーザーが対象原稿の新規下書きを依頼した場合、期限内planの固定順序でタイトル・本文を入力し、`下書き保存`して再読込検証できる。`inspect / verify`は既存noteを入力・クリック・保存なしで読み取り、`verify`はGit正本と比較できる。読み取りsnapshot v2は可視文字列に加えて正規化DOM構造を保持し、`conflict-check`は検証済みbaselineと10分以内のinspectを比較してnote側の手修正を検知する。画像、アイキャッチ、既存記事更新、`update`は引き続き停止する。
+`draft / inspect / verify`は、既存Chrome向けの期限10分・改ざん検知付き実行計画を作る。現行のtext-onlyエディタ契約は`note-text-editor-2026-09-v1`としてコード、テスト、実アカウントE2Eで確認済みである。ユーザーが対象原稿の新規下書きを依頼した場合、期限内planの固定順序でタイトル・本文を入力し、`下書き保存`して再読込検証できる。`inspect / verify`は既存noteを入力・クリック・保存なしで読み取り、`verify`はGit正本と比較できる。読み取りsnapshot v2は可視文字列に加えて正規化DOM構造を保持し、`conflict-check`は検証済みbaselineと10分以内のinspectを比較してnote側の手修正を検知する。`update`は直前のprivate conflict reportに拘束した期限付きplanの準備まで可能だが、実ブラウザでの既存下書き更新はE2E完了まで停止する。画像とアイキャッチも停止する。
 
 ## 必須手順
 
@@ -20,7 +20,7 @@ description: Aqshのnote記事をMarkdownとGitを正本として制作し、安
 5. 新規/更新を`note.url`と`note.key`で判定する。曖昧なら書き込まない。
 6. UI操作前に [references/existing-browser.md](references/existing-browser.md) を読み、読み取り時はさらに [references/editor-structure.md](references/editor-structure.md) を読み、`validate-plan`で`draft / inspect / verify`が発行した期限内plan、対象run、対象URL、該当時は現在の原稿SHA-256を再検査する。
 7. Codexの既存Chrome executorは、CLIが検証した固定plan以外を直接操作しない。下書き操作後は再読込観測を`record-draft`へ渡し、読み取り観測は`record-inspect`または`record-verify`へ渡す。検証結果が成功するまで完了と報告しない。
-8. 既存記事を更新する前は、前回同期後に成功した`verify` snapshotと、同じ記事を10分以内に取得した`inspect` snapshotを`conflict-check`へ渡す。競合がなくても、別途実機確認されるまで`update`は実行しない。
+8. 既存記事を更新する前は、前回同期後に成功した`verify` snapshotと、同じ記事を10分以内に取得した`inspect` snapshotを`conflict-check`へ渡す。`update <article.md> <conflict-report.json>`はplan準備だけに使い、対象差分とreport SHA-256をユーザーへ示して明示承認を得る。実ブラウザ操作は別途E2E確認されるまで実行しない。
 
 ## 安全原則
 
@@ -34,7 +34,7 @@ description: Aqshのnote記事をMarkdownとGitを正本として制作し、安
 - text-only HTML貼付では段落、H2/H3、箇条書きを使用できる。インラインcode要素はプレーンテキスト化されるため、書式として依存しない。
 - selector不一致、URL不明、保存状態不明、verify不一致では推測して続行せず停止する。
 - note側の手修正が疑われる場合は上書きせず、inspect、backup、差分確認へ戻す。
-- `conflict-check`の`update_allowed: true`は競合ゲートの通過だけを意味する。既存記事への書き込み許可として扱わない。
+- `conflict-check`の`update_allowed: true`や`update`の`status: prepared`は、既存記事への書き込み許可を意味しない。対象差分を確認したユーザーの明示承認が必要である。
 - `inspect / verify`ではタイトル・本文への入力、貼付、クリック、保存、再読込を行わない。完全な本文snapshotはGit外へ権限`0600`で保存し、標準出力と`result.json`へ本文を反射しない。
 
 ## 参照

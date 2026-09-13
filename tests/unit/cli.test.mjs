@@ -6,6 +6,7 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
+import { renderedContentSha256 } from "../../src/structure.mjs";
 
 const cliPath = path.resolve("bin/aqsh-note.mjs");
 
@@ -884,7 +885,7 @@ test("record-inspect does not claim a browser connection for an invalid observat
   assert.equal(output.published, false);
 });
 
-test("only the unimplemented update command remains fail-closed", async () => {
+test("update requires an explicit conflict report and never guesses one", async () => {
   const project = await makeProject();
   const result = spawnSync(
     process.execPath,
@@ -894,10 +895,8 @@ test("only the unimplemented update command remains fail-closed", async () => {
 
   assert.equal(result.status, 1);
   const output = JSON.parse(result.stdout);
-  assert.equal(output.status, "blocked");
-  assert.equal(output.action, "update");
-  assert.equal(output.code, "UI_CONTRACT_UNVERIFIED");
-  assert.equal(output.browser_launched, false);
+  assert.equal(output.status, "failed");
+  assert.equal(output.code, "UPDATE_ARGUMENTS_REQUIRED");
   assert.equal(output.published, false);
 });
 
@@ -978,6 +977,150 @@ test("conflict-check allows local edits only when note matches the verified base
   assert.equal(output.published, false);
   assert.doesNotMatch(result.stdout, /dry-run用の記事です|更新予定の記事です/);
   assert.equal((await stat(output.report.path)).mode & 0o777, 0o600);
+
+  const updateProcess = spawnSync(
+    process.execPath,
+    [
+      cliPath,
+      "update",
+      project.articlePath,
+      output.report.path,
+      "--config",
+      project.configPath,
+      "--json"
+    ],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+  assert.equal(updateProcess.status, 0, updateProcess.stderr);
+  const prepared = JSON.parse(updateProcess.stdout);
+  assert.equal(prepared.status, "prepared");
+  assert.equal(prepared.action, "update");
+  assert.equal(prepared.note.key, "n9b5c6afb2521");
+  assert.equal(prepared.approval.conflict_report_sha256, output.report.sha256);
+  assert.equal(prepared.preview.changed, true);
+  assert.equal(prepared.preview.changes.title, false);
+  assert.equal(prepared.preview.changes.text, true);
+  assert.equal(prepared.preview.changes.structure, true);
+  assert.equal(prepared.preview.before.body_characters, 27);
+  assert.equal(prepared.preview.after.body_characters, 23);
+  assert.equal(prepared.requires_confirmation, true);
+  assert.equal(prepared.browser_launched, false);
+  assert.equal(prepared.browser_state_changed, false);
+  assert.equal(prepared.saved, false);
+  assert.equal(prepared.published, false);
+  assert.doesNotMatch(updateProcess.stdout, /dry-run用の記事です|更新予定の記事です/);
+  assert.equal((await stat(prepared.plan.path)).mode & 0o777, 0o600);
+
+  const validatedProcess = spawnSync(
+    process.execPath,
+    [cliPath, "validate-plan", prepared.plan.path, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+  assert.equal(validatedProcess.status, 0, validatedProcess.stderr);
+  const validated = JSON.parse(validatedProcess.stdout);
+  assert.equal(validated.plan_mode, "update");
+  assert.equal(validated.requires_confirmation, true);
+
+  const updatedText = "これはブラウザを起動しない更新予定の記事です。";
+  const updateObservation = {
+    accountId: "aqsh",
+    url: "https://editor.note.com/notes/n9b5c6afb2521/edit/",
+    title: "CLIテスト",
+    text: updatedText,
+    structure: [{
+      type: "element",
+      tag: "p",
+      attrs: {},
+      children: [{ type: "text", value: updatedText }]
+    }],
+    h2: [],
+    h3: [],
+    imageCount: 0,
+    saveControlName: "下書き保存",
+    publishControlName: "公開に進む",
+    reloaded: true,
+    published: false
+  };
+  const recordedProcess = spawnSync(
+    process.execPath,
+    [cliPath, "record-update", prepared.plan.path, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8", input: JSON.stringify(updateObservation) }
+  );
+  assert.equal(recordedProcess.status, 0, recordedProcess.stderr);
+  const recorded = JSON.parse(recordedProcess.stdout);
+  assert.equal(recorded.status, "success");
+  assert.equal(recorded.action, "update");
+  assert.equal(recorded.note.key, "n9b5c6afb2521");
+  assert.equal(recorded.saved, true);
+  assert.equal(recorded.published, false);
+
+  const originalPlan = JSON.parse(await readFile(prepared.plan.path, "utf8"));
+  const tamperedPayload = {
+    ...originalPlan,
+    before: { ...originalPlan.before, text: "別の更新前本文" }
+  };
+  delete tamperedPayload.sha256;
+  const tamperedPlan = {
+    ...tamperedPayload,
+    sha256: createHash("sha256").update(JSON.stringify(tamperedPayload), "utf8").digest("hex")
+  };
+  await writeFile(prepared.plan.path, `${JSON.stringify(tamperedPlan, null, 2)}\n`, "utf8");
+  const tamperedValidationProcess = spawnSync(
+    process.execPath,
+    [cliPath, "validate-plan", prepared.plan.path, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+  assert.equal(tamperedValidationProcess.status, 1);
+  assert.equal(JSON.parse(tamperedValidationProcess.stdout).code, "UPDATE_NOT_ALLOWED");
+
+  const forgedExpected = { ...originalPlan.expected, title: "差し替えられたタイトル" };
+  const forgedExpectedPayload = {
+    ...originalPlan,
+    source: {
+      ...originalPlan.source,
+      renderedContentSha256: renderedContentSha256({
+        title: forgedExpected.title,
+        structure: forgedExpected.structure
+      })
+    },
+    expected: forgedExpected,
+    actions: originalPlan.actions.map(action => action.kind === "fill_title"
+      ? { ...action, value: forgedExpected.title }
+      : action)
+  };
+  delete forgedExpectedPayload.sha256;
+  const forgedExpectedPlan = {
+    ...forgedExpectedPayload,
+    sha256: createHash("sha256").update(JSON.stringify(forgedExpectedPayload), "utf8").digest("hex")
+  };
+  await writeFile(prepared.plan.path, `${JSON.stringify(forgedExpectedPlan, null, 2)}\n`, "utf8");
+  const forgedExpectedValidation = spawnSync(
+    process.execPath,
+    [cliPath, "validate-plan", prepared.plan.path, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+  assert.equal(forgedExpectedValidation.status, 1);
+  assert.equal(JSON.parse(forgedExpectedValidation.stdout).code, "UPDATE_NOT_ALLOWED");
+
+  const forgedHtmlPayload = {
+    ...originalPlan,
+    actions: originalPlan.actions.map(action => action.kind === "replace_body_html"
+      ? { ...action, html: "<p>差し替えられた本文</p>" }
+      : action)
+  };
+  delete forgedHtmlPayload.sha256;
+  const forgedHtmlPlan = {
+    ...forgedHtmlPayload,
+    sha256: createHash("sha256").update(JSON.stringify(forgedHtmlPayload), "utf8").digest("hex")
+  };
+  await writeFile(prepared.plan.path, `${JSON.stringify(forgedHtmlPlan, null, 2)}\n`, "utf8");
+  const forgedHtmlValidation = spawnSync(
+    process.execPath,
+    [cliPath, "validate-plan", prepared.plan.path, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+  assert.equal(forgedHtmlValidation.status, 1);
+  assert.equal(JSON.parse(forgedHtmlValidation.stdout).code, "UPDATE_NOT_ALLOWED");
 });
 
 test("conflict-check does not leave an empty run when snapshot validation fails", async () => {

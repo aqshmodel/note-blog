@@ -18,10 +18,11 @@
 4. note現状を`inspect`し、10分以内のcurrent snapshotを作る。
 5. 編集後の原稿、baseline snapshot、current snapshotを`conflict-check`へ渡す。
 6. noteの可視文字列またはリンク先・リスト・引用・強調を含む正規化DOM構造がbaselineから変わっていれば上書きせず停止し、Git外のprivate `conflict-report.json`でbefore/currentを確認する。
-7. `update_allowed: true`であり、公開状態を変えずに保存できることが実機確認済みの場合だけupdateする。
-8. verify不一致なら再試行せず停止する。
+7. `update <article.md> <conflict-report.json>`で期限付きplanを準備し、Git差分、記事key、conflict report SHA-256をユーザーへ示す。
+8. ユーザーがその差分を明示承認し、公開状態を変えずに保存できることが実機確認済みの場合だけplanを実行する。
+9. verify不一致なら再試行せず停止する。
 
-現時点ではread-only `inspect / verify`と手順5の`conflict-check`まで実行できる。`update_allowed: true`でも既存noteへの`update`は未実装のため自動実行しない。
+現時点ではread-only `inspect / verify`、手順5の`conflict-check`、手順7のupdate plan準備まで実行できる。既存noteへの書き込みは実アカウントE2E前のため実行しない。
 
 ## 成功報告
 

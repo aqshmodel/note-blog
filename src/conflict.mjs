@@ -173,7 +173,7 @@ function assertSameTarget(articleKey, baselinePlan, currentPlan) {
   ) throw baselineInvalid();
 }
 
-function assertConflictReport(report, run) {
+export function assertConflictReport(report, run) {
   if (
     !hasExactKeys(report, REPORT_KEYS) ||
     report.version !== 2 ||
@@ -196,6 +196,71 @@ function assertConflictReport(report, run) {
   const { sha256: _sha256, ...payload } = report;
   if (digestPayload(payload) !== report.sha256) throw reportInvalid();
   return report;
+}
+
+export function authorizeSyncUpdate({ article, report, now = new Date() }) {
+  const articleTarget = assertArticle(article);
+  const validatedReport = assertConflictReport(report, {
+    runId: report?.runId,
+    action: "conflict-check"
+  });
+  const comparison = compareArticleSnapshots(
+    comparisonShape(validatedReport.baseline),
+    comparisonShape(validatedReport.current)
+  );
+  const sourceChanged = article.sourceSha256 !== validatedReport.article.baselineSourceSha256;
+  const renderedChanged =
+    article.renderedContentSha256 !== validatedReport.article.baselineRenderedContentSha256;
+  const updateAllowed = renderedChanged && comparison.ok;
+  if (
+    validatedReport.accountId !== "aqsh" ||
+    validatedReport.target.key !== articleTarget.key ||
+    JSON.stringify(validatedReport.target) !== JSON.stringify(validatedReport.baseline.note) ||
+    JSON.stringify(validatedReport.target) !== JSON.stringify(validatedReport.current.note) ||
+    path.resolve(validatedReport.article.sourcePath) !== path.resolve(article.sourcePath) ||
+    validatedReport.article.currentSourceSha256 !== article.sourceSha256 ||
+    validatedReport.article.currentRenderedContentSha256 !== article.renderedContentSha256 ||
+    validatedReport.sourceChangedSinceBaseline !== sourceChanged ||
+    validatedReport.renderedContentChangedSinceBaseline !== renderedChanged ||
+    validatedReport.localChangedSinceBaseline !== renderedChanged ||
+    JSON.stringify(validatedReport.comparison) !== JSON.stringify(comparison) ||
+    validatedReport.conflictDetected !== !comparison.ok ||
+    validatedReport.updateNeeded !== renderedChanged ||
+    validatedReport.updateAllowed !== updateAllowed ||
+    updateAllowed !== true
+  ) {
+    throw new AqshNoteError(
+      "UPDATE_NOT_ALLOWED",
+      "競合がない更新対象として確認できないため停止しました。"
+    );
+  }
+
+  const checkedAt = new Date(now);
+  const observedAt = Date.parse(validatedReport.current.observedAt);
+  if (!Number.isFinite(checkedAt.getTime()) || checkedAt.getTime() < observedAt - CLOCK_SKEW_MS) {
+    throw currentInvalid();
+  }
+  if (checkedAt.getTime() - observedAt > CURRENT_INSPECTION_TTL_MS) {
+    throw new AqshNoteError(
+      "UPDATE_PRECONDITION_EXPIRED",
+      "更新前のnote読み取り結果は期限切れです。inspectとconflict-checkを再実行してください。"
+    );
+  }
+
+  return {
+    reportSha256: validatedReport.sha256,
+    assessedAt: validatedReport.assessedAt,
+    target: { ...validatedReport.target },
+    current: {
+      snapshotSha256: validatedReport.current.sha256,
+      title: validatedReport.current.title,
+      text: validatedReport.current.text,
+      structure: validatedReport.current.structure,
+      h2: validatedReport.current.h2,
+      h3: validatedReport.current.h3,
+      imageCount: validatedReport.current.imageCount
+    }
+  };
 }
 
 export function assessSyncConflict({

@@ -12,6 +12,8 @@ const ALLOWED_ACTION_KINDS = new Set([
   "open_existing_editor",
   "fill_title",
   "insert_body_html",
+  "replace_body_html",
+  "verify_current",
   "inspect",
   "verify"
 ]);
@@ -24,6 +26,16 @@ const DRAFT_ACTION_SEQUENCE = [
   "save_draft",
   "verify"
 ];
+const UPDATE_ACTION_SEQUENCE = [
+  "verify_account",
+  "open_existing_editor",
+  "verify_editor_contract",
+  "verify_current",
+  "fill_title",
+  "replace_body_html",
+  "save_draft",
+  "verify"
+];
 const ACTION_KEYS = {
   verify_account: new Set(["kind", "url", "accountId", "field"]),
   verify_editor_contract: new Set(["kind", "contract"]),
@@ -31,6 +43,8 @@ const ACTION_KEYS = {
   open_existing_editor: new Set(["kind", "url", "key"]),
   fill_title: new Set(["kind", "value"]),
   insert_body_html: new Set(["kind", "html", "plainText"]),
+  replace_body_html: new Set(["kind", "html", "plainText"]),
+  verify_current: new Set(["kind", "snapshotSha256"]),
   save_draft: new Set(["kind", "accessibleName"]),
   inspect: new Set(["kind"]),
   verify: new Set(["kind"])
@@ -196,7 +210,7 @@ export function assertSafeUiAction(action) {
     }
     return { kind, value: action.value };
   }
-  if (kind === "insert_body_html") {
+  if (kind === "insert_body_html" || kind === "replace_body_html") {
     if (
       typeof action.html !== "string" || !action.html.trim() ||
       typeof action.plainText !== "string" || !action.plainText.trim()
@@ -210,6 +224,12 @@ export function assertSafeUiAction(action) {
       throw new AqshNoteError("UI_ACTION_INVALID", "下書き保存の操作名が一致しません。");
     }
     return { kind, accessibleName: action.accessibleName };
+  }
+  if (kind === "verify_current") {
+    if (!/^[a-f0-9]{64}$/.test(action.snapshotSha256 ?? "")) {
+      throw new AqshNoteError("UI_ACTION_INVALID", "更新直前snapshotの指定が不正です。");
+    }
+    return { kind, snapshotSha256: action.snapshotSha256 };
   }
   return { kind };
 }
@@ -246,6 +266,27 @@ export function assertSafeReadUiActionPlan(actions, { mode, key }) {
   const validated = actions.map(action => assertSafeUiAction(action));
   if (validated[1].key !== expectedKey) {
     throw new AqshNoteError("UI_ACTION_PLAN_INVALID", "読み取りUI操作計画の対象keyが一致しません。");
+  }
+  return validated;
+}
+
+export function assertSafeUpdateUiActionPlan(actions, { key }) {
+  let expectedKey;
+  try {
+    expectedKey = validateNoteKey(key);
+  } catch {
+    throw new AqshNoteError("UI_ACTION_PLAN_INVALID", "更新UI操作計画のnote keyが不正です。");
+  }
+  if (
+    !Array.isArray(actions) ||
+    actions.length !== UPDATE_ACTION_SEQUENCE.length ||
+    actions.some((action, index) => action?.kind !== UPDATE_ACTION_SEQUENCE[index])
+  ) {
+    throw new AqshNoteError("UI_ACTION_PLAN_INVALID", "更新UI操作計画の順序または回数が不正です。");
+  }
+  const validated = actions.map(action => assertSafeUiAction(action));
+  if (validated[1].key !== expectedKey) {
+    throw new AqshNoteError("UI_ACTION_PLAN_INVALID", "更新UI操作計画の対象keyが一致しません。");
   }
   return validated;
 }
