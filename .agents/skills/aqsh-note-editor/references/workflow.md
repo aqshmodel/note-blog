@@ -22,7 +22,7 @@
 8. ユーザーがその差分を明示承認し、公開状態を変えずに保存できることが実機確認済みの場合だけplanを実行する。
 9. verify不一致なら再試行せず停止する。
 
-現時点ではread-only `inspect / verify`、手順5の`conflict-check`、手順7のupdate plan準備まで実行できる。既存noteへの書き込みは実アカウントE2E前のため実行しない。
+現時点ではread-only `inspect / verify`、手順5の`conflict-check`、手順7のupdate plan準備までを通常運用とする。既存の非公開text-only下書き1件で更新E2Eは成功済みだが、その単発承認を恒久許可とは扱わず、運用ゲートが別途解除されるまで次の書き込みは実行しない。
 
 ## 成功報告
 

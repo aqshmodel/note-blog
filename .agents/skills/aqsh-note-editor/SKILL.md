@@ -9,7 +9,7 @@ description: Aqshのnote記事をMarkdownとGitを正本として制作し、安
 
 ## 現在のhard stop
 
-`draft / inspect / verify`は、既存Chrome向けの期限10分・改ざん検知付き実行計画を作る。現行のtext-onlyエディタ契約は`note-text-editor-2026-09-v1`としてコード、テスト、実アカウントE2Eで確認済みである。ユーザーが対象原稿の新規下書きを依頼した場合、期限内planの固定順序でタイトル・本文を入力し、`下書き保存`して再読込検証できる。`inspect / verify`は既存noteを入力・クリック・保存なしで読み取り、`verify`はGit正本と比較できる。読み取りsnapshot v2は可視文字列に加えて正規化DOM構造を保持し、`conflict-check`は検証済みbaselineと10分以内のinspectを比較してnote側の手修正を検知する。`update`は直前のprivate conflict reportに拘束した期限付きplanの準備まで可能だが、実ブラウザでの既存下書き更新はE2E完了まで停止する。画像とアイキャッチも停止する。
+`draft / inspect / verify`は、既存Chrome向けの期限10分・改ざん検知付き実行計画を作る。現行のtext-onlyエディタ契約は`note-text-editor-2026-09-v1`としてコード、テスト、実アカウントE2Eで確認済みである。ユーザーが対象原稿の新規下書きを依頼した場合、期限内planの固定順序でタイトル・本文を入力し、`下書き保存`して再読込検証できる。`inspect / verify`は既存noteを入力・クリック・保存なしで読み取り、`verify`はGit正本と比較できる。読み取りsnapshot v2は可視文字列に加えて正規化DOM構造を保持し、`conflict-check`は検証済みbaselineと10分以内のinspectを比較してnote側の手修正を検知する。`update`の実ブラウザ操作は承認された非公開text-only下書き1件でE2E成功済みだが、通常運用のhard stopは別途承認されるまで維持する。画像とアイキャッチも停止する。
 
 ## 必須手順
 
@@ -20,7 +20,7 @@ description: Aqshのnote記事をMarkdownとGitを正本として制作し、安
 5. 新規/更新を`note.url`と`note.key`で判定する。曖昧なら書き込まない。
 6. UI操作前に [references/existing-browser.md](references/existing-browser.md) を読み、読み取り時はさらに [references/editor-structure.md](references/editor-structure.md) を読み、`validate-plan`で`draft / inspect / verify`が発行した期限内plan、対象run、対象URL、該当時は現在の原稿SHA-256を再検査する。
 7. Codexの既存Chrome executorは、CLIが検証した固定plan以外を直接操作しない。下書き操作後は再読込観測を`record-draft`へ渡し、読み取り観測は`record-inspect`または`record-verify`へ渡す。検証結果が成功するまで完了と報告しない。
-8. 既存記事を更新する前は、前回同期後に成功した`verify` snapshotと、同じ記事を10分以内に取得した`inspect` snapshotを`conflict-check`へ渡す。`update <article.md> <conflict-report.json>`はplan準備だけに使い、対象差分とreport SHA-256をユーザーへ示して明示承認を得る。実ブラウザ操作は別途E2E確認されるまで実行しない。
+8. 既存記事を更新する前は、前回同期後に成功した`verify` snapshotと、同じ記事を10分以内に取得した`inspect` snapshotを`conflict-check`へ渡す。`update <article.md> <conflict-report.json>`はplan準備だけに使い、対象差分とreport SHA-256をユーザーへ示して明示承認を得る。単発E2Eの成功を恒久許可とは扱わず、通常運用のhard stopが別途解除されるまで次の実ブラウザ更新を実行しない。
 
 ## 安全原則
 

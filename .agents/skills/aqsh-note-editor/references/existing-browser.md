@@ -4,7 +4,7 @@
 
 ## 現在のhard stop
 
-`draft / inspect / verify`はaction別schemaと固定順序を持つ期限付きplanを生成する。text-onlyエディタ契約は`note-text-editor-2026-09-v1`として固定し、実アカウントで新規下書きのHTML貼付・明示保存・再読込QAと、既存下書きのsnapshot v2によるread-only構造検査・Git正本比較・更新前競合判定まで確認済みである。`update`は直前のconflict reportと現在原稿へ拘束したplanを準備できるが、その実ブラウザ操作はE2E前のため停止する。画像とアイキャッチも停止する。
+`draft / inspect / verify`はaction別schemaと固定順序を持つ期限付きplanを生成する。text-onlyエディタ契約は`note-text-editor-2026-09-v1`として固定し、実アカウントで新規下書きのHTML貼付・明示保存・再読込QAと、既存下書きのsnapshot v2によるread-only構造検査・Git正本比較・更新前競合判定まで確認済みである。`update`の実ブラウザ操作は承認された非公開スモーク下書き1件で成功したが、通常運用への昇格は未承認のため停止を維持する。画像とアイキャッチも停止する。
 
 HTML貼付で確認済みの書式は段落、H2、H3、箇条書きである。インラインcode要素は文字を保ったままプレーンテキスト化されたため、記事原稿ではその装飾に依存しない。
 
@@ -64,7 +64,7 @@ HTML貼付で確認済みの書式は段落、H2、H3、箇条書きである。
 4. `status: conflict`または`update_allowed: false`なら書き込まない。タイトル、全文、リンク先、リスト・引用・強調などの構造を比較し、before/current本体はGit外・権限`0600`の`conflict-report.json`だけで確認する。
 5. `update_allowed: true`の場合だけ`update <article.md> <conflict-report.json>`で期限付きplanを準備できる。planは更新直前snapshot、原稿SHA-256、report SHA-256、記事keyに拘束される。
 6. Git差分、記事key、report SHA-256をユーザーへ示し、対象差分への明示承認を得る。`status: prepared`だけでは承認済みと扱わない。
-7. 既存下書きの保存UI契約が実機確認されるまで、planの書き込みactionは実行しない。
+7. 既存下書きの保存UI契約は単発E2Eで確認済みだが、通常運用のhard stopが別途解除されるまで次のplanの書き込みactionは実行しない。
 
 ## 証跡と終了
 

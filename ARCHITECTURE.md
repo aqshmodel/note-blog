@@ -72,7 +72,7 @@ Markdown、画像、Git履歴が正本です。noteは配信先であり、note�
 11. 競合がない場合だけ、private conflict report、現在原稿、記事key、更新直前snapshotに拘束した期限10分のupdate planを準備する。対象差分への明示承認前はブラウザ操作しない。
 12. `result.json`へ結果を書き、必ず`published: false`を返す。
 
-title/body/save/publish-controlのtext-only UI契約は`note-text-editor-2026-09-v1`として固定済みである。新規`draft`はタイトル・本文入力、`下書き保存`、再読込QAまで、既存noteの`inspect / verify`は入力・クリック・保存なしの読み取り、snapshot v2のcanonical structure、Git正本比較まで実アカウントで確認済みである。検証済みbaselineと最新inspectによるreport v2の`conflict-check`も実アカウントで確認済みである。既存下書きの`update`は固定順序planと保存後構造QAをローカル実装済みだが、書き込みactionは実アカウントE2E前のhard stopを維持する。画像とアイキャッチもCLIを迂回して操作しない。
+title/body/save/publish-controlのtext-only UI契約は`note-text-editor-2026-09-v1`として固定済みである。新規`draft`はタイトル・本文入力、`下書き保存`、再読込QAまで、既存noteの`inspect / verify`は入力・クリック・保存なしの読み取り、snapshot v2のcanonical structure、Git正本比較まで実アカウントで確認済みである。検証済みbaselineと最新inspectによるreport v2の`conflict-check`も実アカウントで確認済みである。既存の非公開text-only下書き`update`は単発E2Eで保存後構造QAと独立verifyまで成功したが、通常運用への昇格は別の安全ゲートとして保留する。画像とアイキャッチもCLIを迂回して操作しない。
 
 認証は投稿ボタンの有無だけでは成立させません。note ID専用設定画面の単一入力欄が`aqsh`と一致した場合だけ、その実行中の管理対象セッションとして受理します。この確認を永続証明へ置き換えません。raw Playwright traceは通信情報を含み得るため生成しません。
 
@@ -86,4 +86,4 @@ UIの安全契約は`src/browser/`、既存Chrome接続の操作手順はSkill�
 
 `conflict-check`は、前回同期後に成功した`verify` snapshotをbaselineとして、その原稿パス・raw source SHA-256・描画内容SHA-256・記事key・URL・run・plan digestを再検査します。現在状態には同じ記事を10分以内に取得した`inspect` snapshot v2を要求し、title、空白正規化後の全文、H2/H3、画像数、リンクURL・リスト・引用・強調を含むcanonical structure、指紋、重複をbaselineと比較します。
 
-note側に差分があれば`status: conflict`、`update_allowed: false`で停止します。before/currentの本文と構造はGit外・権限`0600`の`conflict-report.json`だけへ保存し、標準出力と`result.json`にはhash、統計、理由だけを残します。noteがbaselineと一致し、ローカルの描画内容SHAだけが変わった場合は競合ゲートとして`update_allowed: true`を返します。frontmatterだけの変更はraw source変更として記録しますが、note本文の更新対象にはしません。`update`はこのreportと更新直前snapshotを再検証してplanを準備するだけで、明示承認前には操作しません。既存下書きへの実書き込みはE2E前のhard stop、公開済み記事の更新UIが外部反映を伴う場合はMVP対象外です。
+note側に差分があれば`status: conflict`、`update_allowed: false`で停止します。before/currentの本文と構造はGit外・権限`0600`の`conflict-report.json`だけへ保存し、標準出力と`result.json`にはhash、統計、理由だけを残します。noteがbaselineと一致し、ローカルの描画内容SHAだけが変わった場合は競合ゲートとして`update_allowed: true`を返します。frontmatterだけの変更はraw source変更として記録しますが、note本文の更新対象にはしません。`update`はこのreportと更新直前snapshotを再検証してplanを準備するだけで、明示承認前には操作しません。既存の非公開text-only下書きは単発E2E成功済みですが、次の実書き込みは通常運用ゲートが別途解除されるまで停止し、公開済み記事の更新UIはMVP対象外です。

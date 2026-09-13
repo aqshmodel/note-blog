@@ -60,11 +60,13 @@
 - [x] 既存下書き1件のread-only `inspect` snapshot v2実アカウントE2E（run `20260913-212203-nfd501185b9d2`、全文662文字、H2×2、H3×1、画像0、構造9 block、ブラウザ変更なし）
 - [x] 同下書きとGit正本のread-only `verify` snapshot v2実アカウントE2E（run `20260913-211223-aqsh-e2e-text-only-20260913-001`、構造を含む全比較一致、重複なし、ブラウザ変更なし）
 - [x] 同下書きの更新前`conflict-check` report v2実アカウントE2E（run `20260913-212520-aqsh-e2e-text-only-20260913-001`、baseline/current構造hash一致、raw source・描画内容ともローカル変更なし、保存・公開なし）
+- [x] 同下書きの既存下書き`update`単発E2E（run `20260913-231456-aqsh-e2e-text-only-20260913-001`、662→678文字、H2×2、H3×1、画像0、保存前・再読込後の全文と構造一致、`saved: true`、`published: false`）
+- [x] 更新後の独立`verify`（run `20260913-232215-aqsh-e2e-text-only-20260913-001`、title・全文・H2/H3・画像数・構造・指紋・重複を含む全比較一致、ブラウザ変更なし）
 
 ## 後続フェーズ
 
 - [ ] `draft`の本番経路
-- [ ] 既存下書きの`update`実ブラウザE2E（plan準備と保存後検証は実装済み、書き込みUI契約は未検証）
+- [ ] 単発E2E証跡をレビューし、既存の非公開text-only下書き`update`を通常運用へ昇格するか判断
 - [ ] 本文画像3方式のPoCと10回連続E2E
 - [ ] アイキャッチ
 - [ ] 認証情報を記録しない診断形式（raw Playwright traceの代替）
@@ -72,4 +74,4 @@
 
 ## 現在のゲート
 
-text-only新規下書き、既存下書きのread-only `inspect / verify`、更新前`conflict-check`は、既存Chromeの実アカウントE2Eまで完了しました。`inspect / verify`は対象keyを固定し、入力・クリック・保存を含まない4 actionだけを許可します。snapshot v2は可視文字列とcanonical structureを別々に保持し、`conflict-check`は検証済みbaselineと10分以内の最新inspectを同一記事へ拘束して、リンク先やリスト・引用・強調を含むnote側差分があれば停止します。`update`は直前のprivate conflict reportと更新直前snapshotへ拘束した期限10分planを準備し、明示承認を要求するところまでローカル実装済みです。実ブラウザへの既存下書き書き込みはE2E未完了のため停止中です。`/notes/new`への遷移だけでも編集URLと空の下書き枠が生成され得るため、ユーザーが新規下書きを依頼した対象原稿だけを扱い、期限内planの固定schema・固定順序以外は使いません。画像、アイキャッチ、既存記事更新の実行は停止中で、公開操作はゲート解除の対象外です。
+text-only新規下書き、既存下書きのread-only `inspect / verify`、更新前`conflict-check`は、既存Chromeの実アカウントE2Eまで完了しました。既存の非公開text-only下書き`update`も、明示承認された1件で保存前照合、`下書き保存`1回、再読込、`record-update`、独立`verify`まで成功しました。この単発承認を恒久許可とは扱わず、通常運用のhard stopは別途解除されるまで維持します。画像、アイキャッチ、公開済み記事の更新は停止中で、公開操作はゲート解除の対象外です。
