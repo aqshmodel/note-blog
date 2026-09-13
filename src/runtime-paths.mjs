@@ -6,6 +6,11 @@ import { AqshNoteError } from "./errors.mjs";
 const RUNTIME_KINDS = {
   profile: {
     root: () => path.join(os.homedir(), ".cache/aqsh-note"),
+    forbiddenRoots: () => [
+      path.join(os.homedir(), "Library/Application Support/Google/Chrome"),
+      path.join(os.homedir(), ".config/google-chrome"),
+      path.join(os.homedir(), "AppData/Local/Google/Chrome/User Data")
+    ],
     marker: ".aqsh-note-profile",
     errorCode: "PROFILE_PATH_UNSAFE",
     label: "Chromeプロファイル"
@@ -79,10 +84,14 @@ function unsafePathError(definition) {
 
 export async function assertDedicatedRuntimePath(directory, kind) {
   const definition = runtimeKind(kind);
-  const [canonical, trustedRoot] = await Promise.all([
+  const [canonical, trustedRoot, forbiddenRoots] = await Promise.all([
     canonicalizeWithMissingTail(directory),
-    canonicalizeWithMissingTail(definition.root())
+    canonicalizeWithMissingTail(definition.root()),
+    Promise.all((definition.forbiddenRoots?.() ?? []).map(canonicalizeWithMissingTail))
   ]);
+  if (forbiddenRoots.some(root => isWithin(canonical, root))) {
+    throw unsafePathError(definition);
+  }
   const details = await pathDetails(canonical);
   if (details.exists && !details.isDirectory) throw unsafePathError(definition);
 

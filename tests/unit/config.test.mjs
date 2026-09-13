@@ -93,6 +93,20 @@ test("rejects the daily Chrome user data directory", async () => {
   await assert.rejects(() => loadConfig(configPath), error => error?.code === "PROFILE_PATH_UNSAFE");
 });
 
+test("rejects a profile nested inside the daily Chrome user data directory", async () => {
+  const { loadConfig } = await loadSut();
+  assert.equal(typeof loadConfig, "function", "loadConfig must exist");
+  const unsafe = path.join(
+    os.homedir(),
+    "Library/Application Support/Google/Chrome/Profile 1"
+  );
+  const { configPath } = await writeConfig(
+    validConfig().replace("~/.cache/aqsh-note/chrome-profile", unsafe)
+  );
+
+  await assert.rejects(() => loadConfig(configPath), error => error?.code === "PROFILE_PATH_UNSAFE");
+});
+
 test("rejects existing unrelated directories as runtime storage", async () => {
   const { loadConfig } = await loadSut();
   assert.equal(typeof loadConfig, "function", "loadConfig must exist");
