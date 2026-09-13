@@ -49,3 +49,30 @@ export function parseManagedNoteUrl(value, expectedAccountId) {
     canonicalUrl: `https://note.com/${accountId}/n/${key}`
   };
 }
+
+export function parseNoteEditorUrl(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new AqshNoteError("NOTE_EDITOR_URL_INVALID", "note編集URLを解釈できません。");
+  }
+  if (
+    url.origin !== "https://editor.note.com" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new AqshNoteError("NOTE_EDITOR_URL_INVALID", "許可されたnote編集URLではありません。");
+  }
+  const match = url.pathname.match(/^\/notes\/(n[a-z0-9]{8,32})\/edit\/$/i);
+  if (!match) {
+    throw new AqshNoteError("NOTE_EDITOR_URL_INVALID", "許可されたnote編集URLではありません。");
+  }
+  const key = validateNoteKey(match[1]);
+  return {
+    key,
+    canonicalUrl: `https://editor.note.com/notes/${key}/edit/`
+  };
+}

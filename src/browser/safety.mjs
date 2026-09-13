@@ -1,9 +1,12 @@
 import { AqshNoteError } from "../errors.mjs";
 import { parseManagedNoteUrl } from "../note-url.mjs";
+import { textEditorContract } from "./editor-contract.mjs";
 
 const FORBIDDEN_CONTROL_JA = /(公開|投稿|更新する)/;
 const FORBIDDEN_CONTROL_EN = /(publish|post|update)/i;
 const ALLOWED_ACTION_KINDS = new Set([
+  "verify_account",
+  "verify_editor_contract",
   "save_draft",
   "open_new_editor",
   "fill_title",
@@ -11,13 +14,17 @@ const ALLOWED_ACTION_KINDS = new Set([
   "verify"
 ]);
 const DRAFT_ACTION_SEQUENCE = [
+  "verify_account",
   "open_new_editor",
+  "verify_editor_contract",
   "fill_title",
   "insert_body_html",
   "save_draft",
   "verify"
 ];
 const ACTION_KEYS = {
+  verify_account: new Set(["kind", "url", "accountId", "field"]),
+  verify_editor_contract: new Set(["kind", "contract"]),
   open_new_editor: new Set(["kind", "url"]),
   fill_title: new Set(["kind", "value"]),
   insert_body_html: new Set(["kind", "html", "plainText"]),
@@ -125,6 +132,40 @@ export function assertSafeUiAction(action) {
   const kind = String(action.kind);
   if (Object.keys(action).some(key => !ACTION_KEYS[kind].has(key))) {
     throw new AqshNoteError("UI_ACTION_INVALID", "UI操作に許可されていない項目があります。");
+  }
+
+  if (kind === "verify_account") {
+    const field = action.field;
+    if (
+      action.accountId !== "aqsh" ||
+      !field || typeof field !== "object" || Array.isArray(field) ||
+      Object.keys(field).length !== 4 ||
+      !["name", "ariaLabel", "expectedValue", "count"].every(key => Object.hasOwn(field, key)) ||
+      field.name !== "urlname" ||
+      field.ariaLabel !== "note ID" ||
+      field.expectedValue !== "aqsh" ||
+      field.count !== 1
+    ) {
+      throw new AqshNoteError("UI_ACTION_INVALID", "Aqshアカウント本人確認の定義が不正です。");
+    }
+    const url = assertAllowedNoteNavigation(action.url, {
+      accountId: action.accountId,
+      purpose: "account-settings"
+    });
+    return {
+      kind,
+      url,
+      accountId: action.accountId,
+      field: { ...field }
+    };
+  }
+
+  if (kind === "verify_editor_contract") {
+    const expected = textEditorContract();
+    if (JSON.stringify(action.contract) !== JSON.stringify(expected)) {
+      throw new AqshNoteError("UI_ACTION_INVALID", "noteエディタ契約の定義が不正です。");
+    }
+    return { kind, contract: expected };
   }
 
   if (kind === "open_new_editor") {

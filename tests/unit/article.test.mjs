@@ -69,6 +69,7 @@ assets:
   assert.equal(article.images[0].alt, "運用フロー");
   assert.equal(article.images[0].source, "./images/flow.png");
   assert.equal(article.images[0].exists, true);
+  assert.match(article.sourceSha256, /^[a-f0-9]{64}$/);
 });
 
 test("uses the first H1 when frontmatter title is absent", async () => {

@@ -3,6 +3,7 @@ import { chromium } from "playwright";
 import { acquireRunLock } from "../lock.mjs";
 import { ensureDedicatedRuntimeDirectory } from "../runtime-paths.mjs";
 import { assertBrowserRuntime } from "../doctor.mjs";
+import { parseNoteEditorUrl } from "../note-url.mjs";
 
 async function safeScreenshot(page, filePath) {
   if (!page || page.isClosed()) return null;
@@ -23,10 +24,6 @@ export function browserArtifactPolicy(action) {
   };
 }
 
-function isNoteKey(value) {
-  return /^n[a-z0-9]{8,32}$/i.test(value);
-}
-
 export function mayCaptureNoteScreenshot({ action, identityVerified, url, accountId = "aqsh" }) {
   if (!identityVerified || !new Set(["draft", "update", "verify", "inspect"]).has(action)) return false;
 
@@ -37,19 +34,26 @@ export function mayCaptureNoteScreenshot({ action, identityVerified, url, accoun
     return false;
   }
   if (
-    parsed.origin !== "https://note.com" ||
     parsed.username ||
     parsed.password ||
     parsed.search ||
     parsed.hash
   ) return false;
 
-  const editMatch = parsed.pathname.match(/^\/notes\/(n[a-z0-9]{8,32})\/edit$/i);
   const publicMatch = parsed.pathname.match(/^\/([^/]+)\/n\/(n[a-z0-9]{8,32})$/i);
-  const isNewEditor = parsed.pathname === "/notes/new";
-  const isEditPage = Boolean(editMatch && isNoteKey(editMatch[1]));
+  const isNewEditor = parsed.origin === "https://note.com" && parsed.pathname === "/notes/new";
+  let isEditPage = false;
+  try {
+    parseNoteEditorUrl(parsed.toString());
+    isEditPage = true;
+  } catch {
+    isEditPage = false;
+  }
   const isManagedPublicPage = Boolean(
-    publicMatch && publicMatch[1] === accountId && isNoteKey(publicMatch[2])
+    parsed.origin === "https://note.com" &&
+    publicMatch &&
+    publicMatch[1] === accountId &&
+    /^n[a-z0-9]{8,32}$/i.test(publicMatch[2])
   );
 
   if (action === "draft") return isNewEditor || isEditPage;

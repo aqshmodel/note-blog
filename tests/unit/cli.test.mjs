@@ -366,9 +366,234 @@ test("login validates its manual-login timeout before launching a browser", asyn
   assert.equal(output.published, false);
 });
 
-test("reserved browser commands fail closed until their UI contract is verified", async () => {
+test("draft prepares an expiring existing-Chrome plan without changing browser state", async () => {
   const project = await makeProject();
-  for (const command of ["draft", "update", "verify", "inspect"]) {
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, "draft", project.articlePath, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.status, "prepared");
+  assert.equal(output.action, "draft");
+  assert.equal(output.intended_action, "draft");
+  assert.equal(output.account, "aqsh");
+  assert.equal(output.git_verified, true);
+  assert.equal(output.browser_executor, "codex-existing-chrome-v1");
+  assert.equal(output.browser_launched, false);
+  assert.equal(output.browser_state_changed, false);
+  assert.equal(output.saved, false);
+  assert.equal(output.published, false);
+  assert.equal(output.requires_confirmation, true);
+  assert.match(output.plan.sha256, /^[a-f0-9]{64}$/);
+  const plan = JSON.parse(await readFile(output.plan.path, "utf8"));
+  assert.equal(plan.sha256, output.plan.sha256);
+  assert.equal(plan.actions[0].kind, "verify_account");
+  assert.equal(plan.actions.at(-1).kind, "verify");
+  const saved = await readFile(path.join(project.stateDir, "runs", output.run_id, "result.json"), "utf8");
+  assert.doesNotMatch(saved, /これはブラウザを起動しないdry-run用の記事です/);
+});
+
+test("draft preparation refuses an article already bound to note", async () => {
+  const project = await makeProject();
+  const source = await readFile(project.articlePath, "utf8");
+  await writeFile(
+    project.articlePath,
+    source.replace("status: draft", "status: draft\nnote:\n  key: n9b5c6afb2521"),
+    "utf8"
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, "draft", project.articlePath, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 2, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.status, "failed");
+  assert.equal(output.action, "draft");
+  assert.equal(output.saved, false);
+  assert.equal(output.published, false);
+  assert.ok(output.errors.some(error => error.code === "DRAFT_ALREADY_BOUND"));
+});
+
+test("record-draft verifies a reloaded browser snapshot and replaces the prepared result", async () => {
+  const project = await makeProject();
+  const preparedProcess = spawnSync(
+    process.execPath,
+    [cliPath, "draft", project.articlePath, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+  assert.equal(preparedProcess.status, 0, preparedProcess.stderr);
+  const prepared = JSON.parse(preparedProcess.stdout);
+  const observation = {
+    url: "https://editor.note.com/notes/n9b5c6afb2521/edit/",
+    title: "CLIテスト",
+    text: "これはブラウザを起動しないdry-run用の記事です。",
+    h2: [],
+    h3: [],
+    imageCount: 0,
+    saveControlName: "下書き保存",
+    reloaded: true,
+    published: false
+  };
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, "record-draft", prepared.plan.path, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8", input: JSON.stringify(observation) }
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.status, "success");
+  assert.equal(output.action, "draft");
+  assert.equal(output.note.key, "n9b5c6afb2521");
+  assert.equal(output.saved, true);
+  assert.equal(output.published, false);
+  const saved = JSON.parse(await readFile(
+    path.join(project.stateDir, "runs", output.run_id, "result.json"),
+    "utf8"
+  ));
+  assert.equal(saved.status, "success");
+  assert.equal(saved.saved, true);
+  assert.doesNotMatch(JSON.stringify(saved), /これはブラウザを起動しないdry-run用の記事です/);
+});
+
+test("record-draft rejects plan paths outside the dedicated state root before reading", async () => {
+  const project = await makeProject();
+  const outside = await mkdtemp(path.join(os.tmpdir(), "aqsh-note-outside-plan-"));
+  const planPath = path.join(outside, "BROWSER_PLAN_PATH_SECRET.json");
+  await writeFile(planPath, "BROWSER_PLAN_CONTENT_SECRET", "utf8");
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, "record-draft", planPath, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8", input: "{}" }
+  );
+
+  assert.equal(result.status, 1);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.code, "BROWSER_PLAN_PATH_INVALID");
+  assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /BROWSER_PLAN_PATH_SECRET|BROWSER_PLAN_CONTENT_SECRET/);
+});
+
+test("record-draft binds a browser plan to its containing run directory", async () => {
+  const project = await makeProject();
+  const preparedProcess = spawnSync(
+    process.execPath,
+    [cliPath, "draft", project.articlePath, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+  assert.equal(preparedProcess.status, 0, preparedProcess.stderr);
+  const prepared = JSON.parse(preparedProcess.stdout);
+  const copiedRun = path.join(project.stateDir, "runs", "20260913-190001-copied-plan");
+  await mkdir(copiedRun, { recursive: true });
+  const copiedPlan = path.join(copiedRun, "browser-plan.json");
+  await writeFile(copiedPlan, await readFile(prepared.plan.path, "utf8"), "utf8");
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, "record-draft", copiedPlan, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8", input: "{}" }
+  );
+
+  assert.equal(result.status, 1);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.code, "BROWSER_PLAN_INVALID");
+  assert.equal(output.published, false);
+});
+
+test("validate-plan rechecks expiry, run binding, and current source before browser use", async () => {
+  const project = await makeProject();
+  const preparedProcess = spawnSync(
+    process.execPath,
+    [cliPath, "draft", project.articlePath, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+  assert.equal(preparedProcess.status, 0, preparedProcess.stderr);
+  const prepared = JSON.parse(preparedProcess.stdout);
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, "validate-plan", prepared.plan.path, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.status, "validated");
+  assert.equal(output.action, "validate-plan");
+  assert.equal(output.run_id, prepared.run_id);
+  assert.equal(output.account, "aqsh");
+  assert.equal(output.plan.sha256, prepared.plan.sha256);
+  assert.equal(output.browser_state_changed, false);
+  assert.equal(output.saved, false);
+  assert.equal(output.published, false);
+});
+
+test("validate-plan refuses a source changed after plan creation", async () => {
+  const project = await makeProject();
+  const preparedProcess = spawnSync(
+    process.execPath,
+    [cliPath, "draft", project.articlePath, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+  assert.equal(preparedProcess.status, 0, preparedProcess.stderr);
+  const prepared = JSON.parse(preparedProcess.stdout);
+  await writeFile(project.articlePath, "---\nid: changed\ntitle: changed\nstatus: draft\n---\n# changed\nchanged\n", "utf8");
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, "validate-plan", prepared.plan.path, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 1);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.code, "BROWSER_PLAN_SOURCE_CHANGED");
+  assert.equal(output.published, false);
+});
+
+test("record-draft preserves an audit result when the post-save observation is invalid", async () => {
+  const project = await makeProject();
+  const preparedProcess = spawnSync(
+    process.execPath,
+    [cliPath, "draft", project.articlePath, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+  assert.equal(preparedProcess.status, 0, preparedProcess.stderr);
+  const prepared = JSON.parse(preparedProcess.stdout);
+
+  const result = spawnSync(
+    process.execPath,
+    [cliPath, "record-draft", prepared.plan.path, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8", input: JSON.stringify({ reloaded: false }) }
+  );
+
+  assert.equal(result.status, 2, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.status, "failed");
+  assert.equal(output.action, "draft");
+  assert.equal(output.saved, "unknown");
+  assert.equal(output.browser_state_changed, true);
+  assert.equal(output.published, false);
+  assert.ok(output.errors.some(error => error.code === "DRAFT_OBSERVATION_INVALID"));
+  const saved = JSON.parse(await readFile(
+    path.join(project.stateDir, "runs", prepared.run_id, "result.json"),
+    "utf8"
+  ));
+  assert.equal(saved.status, "failed");
+  assert.equal(saved.saved, "unknown");
+  assert.equal(saved.browser_state_changed, true);
+});
+
+test("unimplemented update and inspection commands remain fail-closed", async () => {
+  const project = await makeProject();
+  for (const command of ["update", "verify", "inspect"]) {
     const target = command === "inspect" ? "https://note.com/aqsh/n/n9b5c6afb2521" : project.articlePath;
     const result = spawnSync(
       process.execPath,

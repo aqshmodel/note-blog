@@ -49,7 +49,7 @@ test("screenshots require verified identity and an exact editor URL", async () =
   assert.equal(mayCaptureNoteScreenshot({
     action: "update",
     identityVerified: true,
-    url: "https://note.com/notes/n9b5c6afb2521/edit"
+    url: "https://editor.note.com/notes/n9b5c6afb2521/edit/"
   }), true);
 
   for (const unsafe of [
@@ -60,6 +60,8 @@ test("screenshots require verified identity and an exact editor URL", async () =
     { action: "draft", identityVerified: true, url: "https://evil.example/notes/new" },
     { action: "draft", identityVerified: true, url: "https://note.com/notes/new?next=/login" },
     { action: "draft", identityVerified: true, url: "https://note.com/notes/new#login" },
+    { action: "draft", identityVerified: true, url: "https://editor.note.com/notes/n9b5c6afb2521/edit" },
+    { action: "draft", identityVerified: true, url: "https://editor.note.com/notes/n9b5c6afb2521/edit/?next=publish" },
     { action: "login", identityVerified: true, url: "https://note.com/notes/new" }
   ]) {
     assert.equal(mayCaptureNoteScreenshot(unsafe), false, JSON.stringify(unsafe));

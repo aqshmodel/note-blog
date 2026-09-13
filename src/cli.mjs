@@ -1,4 +1,6 @@
 import path from "node:path";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { loadArticle } from "./article.mjs";
 import { loadConfig } from "./config.mjs";
@@ -8,14 +10,23 @@ import { preflightArticle } from "./preflight.mjs";
 import { isPathWithinRoot } from "./path-safety.mjs";
 import { createRunContext, listRecoveryRuns, redactSecrets, writeRunResult } from "./state.mjs";
 import { runLogin } from "./commands/login.mjs";
+import {
+  assertDraftBridgePlan,
+  createDraftBridgePlan,
+  writeDraftBridgePlan
+} from "./browser/bridge-plan.mjs";
+import { verifyDraftObservation } from "./browser/draft-result.mjs";
 
 const projectRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const defaultConfigPath = path.join(projectRoot, "config/note.yaml");
-const reservedBrowserCommands = new Set(["draft", "update", "verify", "inspect"]);
+const reservedBrowserCommands = new Set(["update", "verify", "inspect"]);
 const supportedCommands = new Set([
   "doctor",
   "login",
   "dry-run",
+  "draft",
+  "validate-plan",
+  "record-draft",
   "recover",
   "help",
   ...reservedBrowserCommands
@@ -73,6 +84,25 @@ function printHuman(result) {
   if (result.action === "login") {
     console.log(`login: ${result.status}`);
     console.log(result.message);
+    console.log("published: false");
+    return;
+  }
+  if (result.action === "draft" && result.status === "prepared") {
+    console.log(`draft preparation: ${result.status}`);
+    console.log(`title: ${result.article.title}`);
+    console.log(`plan: ${result.plan?.path ?? "not created"}`);
+    console.log("browser: not launched");
+    console.log("saved: false");
+    console.log("published: false");
+    for (const error of result.errors ?? []) console.log(`[error] ${error.code}: ${error.message}`);
+    for (const warning of result.warnings ?? []) console.log(`[warning] ${warning.code}: ${warning.message}`);
+    return;
+  }
+  if (result.action === "draft") {
+    console.log(`draft: ${result.status}`);
+    console.log(`title: ${result.article?.title ?? "unknown"}`);
+    console.log(`editor: ${result.note?.editor_url ?? "unknown"}`);
+    console.log(`saved: ${String(result.saved)}`);
     console.log("published: false");
     return;
   }
@@ -156,6 +186,202 @@ async function handleDryRun(config, articlePath, json) {
   return preflight.ok ? 0 : 2;
 }
 
+async function handleDraft(config, articlePath, json) {
+  if (!articlePath) throw new AqshNoteError("ARTICLE_PATH_REQUIRED", "draftにはarticle.mdが必要です。");
+  await assertManagedGitSource(config);
+  if (!(await isPathWithinRoot(articlePath, config.paths.contentRoot))) {
+    throw new AqshNoteError(
+      "ARTICLE_OUTSIDE_CONTENT_ROOT",
+      "記事ファイルは設定されたcontent root内に置いてください。"
+    );
+  }
+  const article = await loadArticle(articlePath);
+  const preflight = await preflightArticle(article, {
+    mode: "draft",
+    accountId: config.account.id,
+    contentRoot: config.paths.contentRoot,
+    shortBodyCharacters: config.warnings.shortBodyCharacters,
+    externalLinkWarning: config.warnings.externalLinks
+  });
+  const run = await createRunContext({
+    stateDir: config.paths.stateDir,
+    action: "draft",
+    articleId: article.id ?? path.basename(article.sourcePath, path.extname(article.sourcePath))
+  });
+
+  if (!preflight.ok) {
+    const result = {
+      status: "failed",
+      action: "draft",
+      intended_action: preflight.intendedAction,
+      run_id: run.runId,
+      account: config.account.id,
+      article: { id: article.id, title: article.title, stats: article.stats },
+      errors: preflight.errors,
+      warnings: preflight.warnings,
+      browser_launched: false,
+      browser_state_changed: false,
+      git_verified: true,
+      saved: false,
+      published: false
+    };
+    await writeRunResult(run, result);
+    emit(result, json);
+    return 2;
+  }
+
+  const plan = createDraftBridgePlan({ run, article, config });
+  const planPath = await writeDraftBridgePlan(run, plan);
+  const result = {
+    status: "prepared",
+    action: "draft",
+    intended_action: "draft",
+    run_id: run.runId,
+    account: config.account.id,
+    article: { id: article.id, title: article.title, stats: article.stats },
+    errors: [],
+    warnings: preflight.warnings,
+    browser_executor: "codex-existing-chrome-v1",
+    plan: { path: planPath, sha256: plan.sha256, expires_at: plan.expiresAt },
+    requires_confirmation: true,
+    browser_launched: false,
+    browser_state_changed: false,
+    git_verified: true,
+    saved: false,
+    published: false
+  };
+  await writeRunResult(run, result);
+  emit(result, json);
+  return 0;
+}
+
+async function readObservationFromStdin(limit = 1_000_000) {
+  let input = "";
+  for await (const chunk of process.stdin) {
+    input += chunk;
+    if (Buffer.byteLength(input, "utf8") > limit) {
+      throw new AqshNoteError("DRAFT_OBSERVATION_INVALID", "保存後の観測データが大きすぎます。");
+    }
+  }
+  try {
+    return JSON.parse(input);
+  } catch {
+    throw new AqshNoteError("DRAFT_OBSERVATION_INVALID", "保存後の観測JSONを解釈できません。");
+  }
+}
+
+async function loadManagedDraftPlan(config, planPath, { requireFresh }) {
+  if (!planPath) {
+    throw new AqshNoteError("BROWSER_PLAN_REQUIRED", "browser-plan.jsonを指定してください。");
+  }
+  await assertManagedGitSource(config);
+  const absolutePlanPath = path.resolve(planPath);
+  const runsRoot = path.join(config.paths.stateDir, "runs");
+  if (
+    path.basename(absolutePlanPath) !== "browser-plan.json" ||
+    !(await isPathWithinRoot(absolutePlanPath, runsRoot))
+  ) {
+    throw new AqshNoteError(
+      "BROWSER_PLAN_PATH_INVALID",
+      "browser planは専用state root内のrunから指定してください。"
+    );
+  }
+
+  let plan;
+  try {
+    plan = JSON.parse(await readFile(absolutePlanPath, "utf8"));
+  } catch {
+    throw new AqshNoteError("BROWSER_PLAN_INVALID", "browser planを安全に読み込めません。");
+  }
+  const runDirectory = path.dirname(absolutePlanPath);
+  const run = {
+    runId: path.basename(runDirectory),
+    directory: runDirectory,
+    action: "draft"
+  };
+  const validatedPlan = assertDraftBridgePlan(plan, {
+    expectedRunId: run.runId,
+    now: requireFresh ? new Date() : null
+  });
+  return { absolutePlanPath, run, plan: validatedPlan };
+}
+
+async function handleValidatePlan(config, planPath, json) {
+  const loaded = await loadManagedDraftPlan(config, planPath, { requireFresh: true });
+  if (!(await isPathWithinRoot(loaded.plan.source.path, config.paths.contentRoot))) {
+    throw new AqshNoteError(
+      "BROWSER_PLAN_SOURCE_CHANGED",
+      "下書き計画の元原稿を現在の正本として確認できません。planを再作成してください。"
+    );
+  }
+  let source;
+  try {
+    source = await readFile(loaded.plan.source.path, "utf8");
+  } catch {
+    throw new AqshNoteError(
+      "BROWSER_PLAN_SOURCE_CHANGED",
+      "下書き計画の元原稿を現在の正本として確認できません。planを再作成してください。"
+    );
+  }
+  const sourceSha256 = createHash("sha256").update(source, "utf8").digest("hex");
+  if (sourceSha256 !== loaded.plan.source.sha256) {
+    throw new AqshNoteError(
+      "BROWSER_PLAN_SOURCE_CHANGED",
+      "下書き計画の作成後に原稿が変更されました。planを再作成してください。"
+    );
+  }
+  const result = {
+    status: "validated",
+    action: "validate-plan",
+    run_id: loaded.run.runId,
+    account: loaded.plan.accountId,
+    article: {
+      title: loaded.plan.expected.title,
+      source_sha256: loaded.plan.source.sha256
+    },
+    plan: {
+      path: loaded.absolutePlanPath,
+      sha256: loaded.plan.sha256,
+      expires_at: loaded.plan.expiresAt
+    },
+    browser_state_changed: false,
+    saved: false,
+    published: false
+  };
+  emit(result, json);
+  return 0;
+}
+
+async function handleRecordDraft(config, planPath, json) {
+  const loaded = await loadManagedDraftPlan(config, planPath, { requireFresh: false });
+  const { run, plan: validatedPlan } = loaded;
+  let result;
+  try {
+    const observation = await readObservationFromStdin();
+    result = verifyDraftObservation(validatedPlan, observation, { validatePlan: value => value });
+  } catch (error) {
+    const publicError = toPublicError(error);
+    result = {
+      status: "failed",
+      action: "draft",
+      run_id: run.runId,
+      account: validatedPlan.accountId,
+      article: {
+        title: validatedPlan.expected.title,
+        source_sha256: validatedPlan.source.sha256
+      },
+      errors: [publicError],
+      browser_connected: true,
+      browser_state_changed: true,
+      saved: "unknown",
+      published: false
+    };
+  }
+  await writeRunResult(run, result);
+  emit(result, json);
+  return result.status === "success" ? 0 : 2;
+}
+
 async function handleRecover(config, requestedRunId, json) {
   const runs = await listRecoveryRuns(config.paths.stateDir);
   const selected = requestedRunId ? runs.filter(run => run.runId === requestedRunId) : runs;
@@ -202,8 +428,8 @@ function help(json) {
     status: "success",
     action: "help",
     commands: ["doctor", "login", "dry-run", "draft", "update", "verify", "inspect", "recover"],
-    available_commands: ["doctor", "login", "dry-run", "recover"],
-    blocked_until_e2e: ["draft", "update", "verify", "inspect"],
+    available_commands: ["doctor", "login", "dry-run", "draft", "recover"],
+    blocked_until_e2e: ["update", "verify", "inspect"],
     note: "公開コマンドはありません。",
     published: false
   };
@@ -225,6 +451,9 @@ export async function main(argv = process.argv.slice(2)) {
     if (command === "doctor") return await handleDoctor(config, options.json);
     if (command === "login") return await handleLogin(config, options);
     if (command === "dry-run") return await handleDryRun(config, target, options.json);
+    if (command === "draft") return await handleDraft(config, target, options.json);
+    if (command === "validate-plan") return await handleValidatePlan(config, target, options.json);
+    if (command === "record-draft") return await handleRecordDraft(config, target, options.json);
     if (command === "recover") return await handleRecover(config, target, options.json);
     if (reservedBrowserCommands.has(command)) return handleUnverifiedBrowserCommand(command, options.json);
     return 1;

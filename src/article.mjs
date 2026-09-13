@@ -1,4 +1,5 @@
 import { access, readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import MarkdownIt from "markdown-it";
 import YAML from "yaml";
@@ -197,6 +198,7 @@ export async function loadArticle(filePath) {
     id: parsed.data.id ?? null,
     title,
     sourcePath: absoluteFilePath,
+    sourceSha256: createHash("sha256").update(source, "utf8").digest("hex"),
     directory: articleDirectory,
     frontmatter: parsed.data,
     bodyMarkdown,

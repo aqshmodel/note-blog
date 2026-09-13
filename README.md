@@ -12,6 +12,8 @@ Phase 0とPhase 1前半を実装済みです。
 - 既存Chrome接続: Cookieをコピーせず、`/settings/account/note_id`の単一入力欄が`aqsh`であることを実行ごとに確認
 - `login`: 専用プロファイル方式の診断用コマンド。現環境ではnoteのログイン状態を再利用できないため主経路にはしない
 - `dry-run`: Git root/origin、原稿・画像・URLをブラウザなしで検証し、`git_verified: true`と`intended_action`を確定
+- `draft`: 既存Chrome用の期限10分・改ざん検知付き固定planを準備。単独ではブラウザを開かず、入力・保存もしない。固定済みtext-only UI契約で初回E2Eを実施可能
+- `validate-plan`: browser操作直前にplanの期限・run ID・改ざん・現在の原稿SHA-256を再検査する内部ゲート
 - `recover`: リポジトリ外の実行証跡を読み取り専用で一覧化
 - MarkdownのH1/title解決、HTML変換、見出し・画像・リンク・可視文字数の算出
 - 保存後QA用のタイトル、本文長、見出し、画像数、指紋、重複比較
@@ -21,7 +23,7 @@ Phase 0とPhase 1前半を実装済みです。
 - 設定は既知キーだけを許可し、認証情報・未知キーの混入を拒否
 - frontmatterは`yaml`パーサーへ固定し、`---js`等の実行可能な言語タグを読み込み前に拒否
 
-初回のtext-only下書きE2E、画像配置、既存記事更新は、既存Chrome接続モードで現行noteエディタの実画面を確認してから確定します。未確認のUIを推測して本番アカウントへ書き込まない設計です。詳細は [実装状況](docs/IMPLEMENTATION_STATUS.md) を参照してください。
+現行noteエディタのtext-only UI契約は実画面から固定済みで、初回の非公開下書きE2Eが次のゲートです。画像配置と既存記事更新は引き続き未実装です。未確認のUIを推測して本番アカウントへ書き込まない設計です。詳細は [実装状況](docs/IMPLEMENTATION_STATUS.md) を参照してください。
 
 ## セットアップ
 
@@ -60,7 +62,7 @@ AqshアカウントではGoogleログインを選ぶと未連携アカウント�
 
 リポジトリの`bin/aqsh-note`は`.nvmrc`と同じNodeを選ぶため、`~/.local/bin`へリンクした後は`aqsh-note doctor`の短い形でも実行できます。
 
-`draft / update / verify / inspect` はCLI契約に予約されていますが、現行note UIのE2E検証が済むまで実書き込み経路を有効にしません。この間は既存Chromeでも本人確認の読み取りだけとし、Codexからエディタを直接操作しません。`publish` コマンドは今後も作りません。
+`draft`は既存Chrome用planを準備します。固定済みのtext-only UI契約を使う初回E2E 1件のみ、対象原稿と実行タイミングの確認後に入力・下書き保存・再読込検証できます。`/notes/new`を開く時点で空の下書き枠が生成され得ます。画像、アイキャッチ、`update / verify / inspect`は停止中です。`publish`コマンドは今後も作りません。
 
 ## 記事の作り方
 

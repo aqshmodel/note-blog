@@ -93,6 +93,9 @@ MOTOHA氏の実運用例は、Markdownの最初のH1をタイトルとして扱�
 - 代表確認記事: `https://note.com/aqsh/n/n9b5c6afb2521`
 - 公開記事DOMでは、記事タイトルがH1、本文見出しがH2、本文リストがlistとして取得できる。
 - 既存Chromeの`https://note.com/settings/account/note_id`を直接開き、可視の単一入力欄が`name=urlname`、`aria-label=note ID`、値`aqsh`であることを確認した。Codexのブラウザ連携経由に限定し、profileやCookieを取得せず主経路として利用する。
+- 認証済み既存Chromeで`https://note.com/notes/new`を開くと、入力前に`https://editor.note.com/notes/<key>/edit/`へ遷移した。新規作成画面を開く行為自体が空の下書き枠を生成し得るため、外部状態変更の境界に含める。
+- 2026-09-13の新規エディタでは、タイトルが可視`textarea` 1件（placeholder `記事タイトル`）、本文が可視`div[role=textbox][contenteditable=true][aria-multiline=true]` 1件、`下書き保存`button 1件、操作禁止の`公開に進む`button 1件だった。この組合せを`note-text-editor-2026-09-v1`として固定した。
+- note公式ヘルプでは、新エディタは入力後およそ10秒操作しないと自動保存され、明示的な`下書き保存`でも保存できると案内されている。したがって入力開始を外部状態変更の境界として扱い、UI読み取り検査と本文入力を別ゲートにする。
 - 未認証状態で `https://note.com/notes/new` を開くと、`/login?redirectPath=/notes/new` へ遷移する。
 - 専用ChromeからGoogleログインを選ぶと、既存Aqshアカウントへ自動連携されず「連携済みのアカウントがない」新規登録フローへ入ることを確認した。新規登録は行わず、既存のnote IDとnote用パスワードでログインする。
 - 専用`userDataDir`は手動ログイン時に認証系Cookieが保存された形跡がある一方、Playwright再起動後のアカウント設定アクセスはログイン画面へ戻った。値は取得せず、専用profile方式は主経路から外した。
@@ -102,7 +105,6 @@ MOTOHA氏の実運用例は、Markdownの最初のH1をタイトルとして扱�
 
 ### 既存Chrome接続モードで未確認
 
-- 新規エディタのtitle/bodyロケータ
 - HTMLリッチテキスト貼付の現在の受理挙動
 - 「下書き保存」完了を示すDOMまたは通知
 - 保存後の編集URL・note key取得方法

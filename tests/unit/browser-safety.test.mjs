@@ -72,6 +72,27 @@ test("allows only explicit draft-plan actions and blocks generic clicks", async 
     kind: "save_draft",
     accessibleName: "下書き保存"
   });
+  assert.deepEqual(assertSafeUiAction({
+    kind: "verify_account",
+    url: "https://note.com/settings/account/note_id",
+    accountId: "aqsh",
+    field: {
+      name: "urlname",
+      ariaLabel: "note ID",
+      expectedValue: "aqsh",
+      count: 1
+    }
+  }), {
+    kind: "verify_account",
+    url: "https://note.com/settings/account/note_id",
+    accountId: "aqsh",
+    field: {
+      name: "urlname",
+      ariaLabel: "note ID",
+      expectedValue: "aqsh",
+      count: 1
+    }
+  });
 
   assert.throws(
     () => assertSafeUiAction({ kind: "click", accessibleName: "閉じる" }),
@@ -125,18 +146,41 @@ test("validates every action in a plan before execution", async () => {
 
   assert.deepEqual(
     assertSafeUiActionPlan([
+      {
+        kind: "verify_account",
+        url: "https://note.com/settings/account/note_id",
+        accountId: "aqsh",
+        field: { name: "urlname", ariaLabel: "note ID", expectedValue: "aqsh", count: 1 }
+      },
       { kind: "open_new_editor", url: "https://note.com/notes/new" },
+      {
+        kind: "verify_editor_contract",
+        contract: {
+          version: "note-text-editor-2026-09-v1",
+          title: { strategy: "placeholder", value: "記事タイトル", tag: "textarea", count: 1 },
+          body: { strategy: "role-and-attributes", role: "textbox", tag: "div", contentEditable: "true", ariaMultiline: "true", count: 1 },
+          save: { role: "button", name: "下書き保存", exact: true, count: 1 },
+          publish: { role: "button", name: "公開に進む", exact: true, count: 1, forbidden: true }
+        }
+      },
       { kind: "fill_title", value: "タイトル" },
       { kind: "insert_body_html", html: "<p>本文</p>", plainText: "本文" },
       { kind: "save_draft", accessibleName: "下書き保存" },
       { kind: "verify" }
     ]).map(action => action.kind),
-    ["open_new_editor", "fill_title", "insert_body_html", "save_draft", "verify"]
+    ["verify_account", "open_new_editor", "verify_editor_contract", "fill_title", "insert_body_html", "save_draft", "verify"]
   );
 
   assert.throws(
     () => assertSafeUiActionPlan([
+      {
+        kind: "verify_account",
+        url: "https://note.com/settings/account/note_id",
+        accountId: "aqsh",
+        field: { name: "urlname", ariaLabel: "note ID", expectedValue: "aqsh", count: 1 }
+      },
       { kind: "open_new_editor", url: "https://note.com/notes/new" },
+      { kind: "verify_editor_contract", contract: { version: "wrong" } },
       { kind: "click", accessibleName: "閉じる" }
     ]),
     error => error?.code === "UI_ACTION_PLAN_INVALID"
@@ -145,13 +189,27 @@ test("validates every action in a plan before execution", async () => {
   for (const actions of [
     [
       { kind: "save_draft", accessibleName: "下書き保存" },
+      {
+        kind: "verify_account",
+        url: "https://note.com/settings/account/note_id",
+        accountId: "aqsh",
+        field: { name: "urlname", ariaLabel: "note ID", expectedValue: "aqsh", count: 1 }
+      },
       { kind: "open_new_editor", url: "https://note.com/notes/new" },
+      { kind: "verify_editor_contract", contract: { version: "wrong" } },
       { kind: "fill_title", value: "タイトル" },
       { kind: "insert_body_html", html: "<p>本文</p>", plainText: "本文" },
       { kind: "verify" }
     ],
     [
+      {
+        kind: "verify_account",
+        url: "https://note.com/settings/account/note_id",
+        accountId: "aqsh",
+        field: { name: "urlname", ariaLabel: "note ID", expectedValue: "aqsh", count: 1 }
+      },
       { kind: "open_new_editor", url: "https://note.com/notes/new" },
+      { kind: "verify_editor_contract", contract: { version: "wrong" } },
       { kind: "fill_title", value: "タイトル" },
       { kind: "insert_body_html", html: "<p>本文</p>", plainText: "本文" },
       { kind: "save_draft", accessibleName: "下書き保存" },

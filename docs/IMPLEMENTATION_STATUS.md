@@ -33,12 +33,17 @@
 - [x] content root外の記事を読み込み前に拒否し、非同期失敗も単一のsanitized JSONへ変換
 - [x] macOS + Google Chrome以外をfail-closed
 - [x] リポジトリ内Codex Skill
+- [x] `draft`の非書き込み準備経路（期限10分・SHA-256改ざん検知付き既存Chrome plan）
+- [x] planの先頭にnote ID `aqsh`の一意確認を固定
+- [x] 現行text-onlyエディタのURL・title・body・保存・公開禁止コントロールを`note-text-editor-2026-09-v1`として固定
+- [x] 保存後観測のrun ID拘束と、観測不能時の`saved: unknown`監査記録
+- [x] `validate-plan`による操作直前の期限・run・plan改ざん・原稿SHA-256再検査
 
 ## 外部環境で確認中
 
 - [x] 既存ChromeでAqshアカウントへのログイン確認
 - [!] 専用profile方式は手動ログイン後のセッション再利用に失敗するため診断用に保留
-- [ ] 現行noteエディタのtitle/body locator
+- [x] 現行noteエディタのtitle/body locator
 - [ ] HTML pasteの受理
 - [ ] 明示的な下書き保存と自動保存の状態表示
 - [ ] 保存後の編集URLと記事key
@@ -57,4 +62,4 @@
 
 ## 現在のゲート
 
-noteへの実書き込みは、既存Chrome接続モードのUI契約確認が終わるまで有効化しません。現在、既存Chromeで許可するのはnote ID専用設定画面の読み取りだけで、Codexからエディタを直接操作しません。解除後も書き込み直前にGit検証済みの`dry-run`と`aqsh`本人確認を行い、固定schema・固定順序planのbrowser executorだけを使います。最初のテスト下書きは外部状態を作るため、対象原稿と実行タイミングを確認してから行います。公開操作はゲート解除の対象外です。
+`draft`は既存Chrome用planを準備し、固定済みUI契約を使うtext-only新規下書きE2Eを1件だけ実行できる段階です。`/notes/new`への遷移だけでも編集URLと空の下書き枠が生成され得るため、対象原稿と実行タイミングを操作直前に確認します。期限内planの固定schema・固定順序以外は使いません。画像、アイキャッチ、既存記事更新、`update / verify / inspect`は停止中で、公開操作はゲート解除の対象外です。

@@ -1,5 +1,6 @@
 import { AqshNoteError } from "../errors.mjs";
 import { assertSafeUiActionPlan } from "./safety.mjs";
+import { textEditorContract } from "./editor-contract.mjs";
 
 export function buildDraftPlan(article, config) {
   if (config?.security?.allowPublish !== false) {
@@ -28,7 +29,19 @@ export function buildDraftPlan(article, config) {
   }
 
   const actions = [
+    {
+      kind: "verify_account",
+      url: "https://note.com/settings/account/note_id",
+      accountId: config.account?.id,
+      field: {
+        name: "urlname",
+        ariaLabel: "note ID",
+        expectedValue: config.account?.id,
+        count: 1
+      }
+    },
     { kind: "open_new_editor", url: config.editor?.newUrl },
+    { kind: "verify_editor_contract", contract: textEditorContract() },
     { kind: "fill_title", value: article.title },
     { kind: "insert_body_html", html: article.html, plainText: article.text },
     { kind: "save_draft", accessibleName: "下書き保存" },

@@ -23,6 +23,7 @@ function article(overrides = {}) {
 }
 
 const config = {
+  account: { id: "aqsh" },
   editor: { inlineImageStrategy: "unverified", newUrl: "https://note.com/notes/new" },
   security: { allowPublish: false }
 };
@@ -35,14 +36,28 @@ test("builds a text-only plan ending in draft save and verification", async () =
   const plan = buildDraftPlan(article(), config);
 
   assert.deepEqual(plan.actions.map(action => action.kind), [
+    "verify_account",
     "open_new_editor",
+    "verify_editor_contract",
     "fill_title",
     "insert_body_html",
     "save_draft",
     "verify"
   ]);
   assert.equal(plan.published, false);
-  assert.equal(plan.actions[0].url, "https://note.com/notes/new");
+  assert.deepEqual(plan.actions[0], {
+    kind: "verify_account",
+    url: "https://note.com/settings/account/note_id",
+    accountId: "aqsh",
+    field: {
+      name: "urlname",
+      ariaLabel: "note ID",
+      expectedValue: "aqsh",
+      count: 1
+    }
+  });
+  assert.equal(plan.actions[1].url, "https://note.com/notes/new");
+  assert.equal(plan.actions[2].contract.version, "note-text-editor-2026-09-v1");
   assert.ok(plan.actions.every(action => !/公開|投稿|publish|post/i.test(action.accessibleName ?? "")));
   assert.doesNotThrow(() => plan.actions.forEach(action => assertSafeUiAction(action)));
 });

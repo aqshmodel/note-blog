@@ -49,3 +49,23 @@ test("validates a key supplied without a URL", async () => {
   assert.equal(validateNoteKey("n9b5c6afb2521"), "n9b5c6afb2521");
   assert.throws(() => validateNoteKey("../../settings"), error => error?.code === "NOTE_KEY_INVALID");
 });
+
+test("parses only the current editor.note.com draft editor URL", async () => {
+  const { parseNoteEditorUrl } = await loadSut();
+  assert.equal(typeof parseNoteEditorUrl, "function", "parseNoteEditorUrl must exist");
+
+  assert.deepEqual(parseNoteEditorUrl("https://editor.note.com/notes/n9b5c6afb2521/edit/"), {
+    key: "n9b5c6afb2521",
+    canonicalUrl: "https://editor.note.com/notes/n9b5c6afb2521/edit/"
+  });
+
+  for (const invalid of [
+    "https://note.com/notes/n9b5c6afb2521/edit/",
+    "https://editor.note.com.evil.example/notes/n9b5c6afb2521/edit/",
+    "https://editor.note.com/notes/n9b5c6afb2521/edit",
+    "https://editor.note.com/notes/n9b5c6afb2521/edit/?next=publish",
+    "https://user:pass@editor.note.com/notes/n9b5c6afb2521/edit/"
+  ]) {
+    assert.throws(() => parseNoteEditorUrl(invalid), error => error?.code === "NOTE_EDITOR_URL_INVALID");
+  }
+});
