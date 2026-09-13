@@ -1,0 +1,8 @@
+interface:
+  display_name: "Aqsh note Editor"
+  short_description: "Aqshのnote記事をMarkdown正本から安全に下書き・検証する"
+  brand_color: "#111111"
+  default_prompt: "Use $aqsh-note-editor to prepare this Aqsh article and validate it before creating a note draft."
+
+policy:
+  allow_implicit_invocation: true

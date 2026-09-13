@@ -1,0 +1,16 @@
+#!/bin/zsh
+set -euo pipefail
+
+script_dir="${0:A:h}"
+project_root="${script_dir:h}"
+node_version="$(tr -d '[:space:]' < "${project_root}/.nvmrc")"
+nvm_root="${NVM_DIR:-${HOME}/.nvm}"
+node_binary="${nvm_root}/versions/node/v${node_version}/bin/node"
+
+if [[ ! -x "${node_binary}" ]]; then
+  print -u2 "aqsh-note: Node.js v${node_version} is not installed under ${nvm_root}."
+  print -u2 "Run: nvm install ${node_version}"
+  exit 1
+fi
+
+exec "${node_binary}" "${script_dir}/aqsh-note.mjs" "$@"

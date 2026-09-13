@@ -1,0 +1,28 @@
+version: 1
+
+account:
+  id: aqsh
+  profile_url: https://note.com/aqsh
+
+editor:
+  new_url: https://note.com/notes/new
+  browser_channel: chrome
+  headless: false
+  inline_image_strategy: unverified
+
+paths:
+  content_root: .
+  profile_dir: ~/.cache/aqsh-note/chrome-profile
+  state_dir: ~/.local/state/aqsh-note
+
+timeouts:
+  navigation_ms: 30000
+  action_ms: 10000
+  total_ms: 300000
+
+warnings:
+  short_body_chars: 400
+  external_links: 20
+
+security:
+  allow_publish: false
