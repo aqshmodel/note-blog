@@ -4,6 +4,7 @@ import path from "node:path";
 import MarkdownIt from "markdown-it";
 import YAML from "yaml";
 import { AqshNoteError } from "./errors.mjs";
+import { renderedContentSha256, structureFromMarkdownTokens } from "./structure.mjs";
 
 const markdown = new MarkdownIt({
   html: false,
@@ -185,6 +186,7 @@ export async function loadArticle(filePath) {
 
   const tokens = markdown.parse(bodyMarkdown, {});
   const inspected = inspectTokens(tokens);
+  const structure = structureFromMarkdownTokens(tokens);
   if (!inspected.text) {
     throw new AqshNoteError("BODY_REQUIRED", "可視テキストを含む本文が必要です。");
   }
@@ -199,10 +201,12 @@ export async function loadArticle(filePath) {
     title,
     sourcePath: absoluteFilePath,
     sourceSha256: createHash("sha256").update(source, "utf8").digest("hex"),
+    renderedContentSha256: renderedContentSha256({ title, structure }),
     directory: articleDirectory,
     frontmatter: parsed.data,
     bodyMarkdown,
     html: markdown.render(bodyMarkdown),
+    structure,
     text: inspected.text,
     headings: inspected.headings,
     images,

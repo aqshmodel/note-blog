@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { AqshNoteError } from "../errors.mjs";
 import { parseManagedNoteUrl, parseNoteEditorUrl } from "../note-url.mjs";
+import { assertCanonicalStructure, renderedContentSha256 } from "../structure.mjs";
 import { textEditorContract } from "./editor-contract.mjs";
 import { assertSafeReadUiActionPlan } from "./safety.mjs";
 
@@ -48,12 +49,17 @@ function payloadWithoutDigest(plan) {
 }
 
 function assertExpectedSnapshot(expected) {
-  if (!hasExactKeys(expected, new Set(["title", "text", "headings", "stats"]))) throw invalidPlan();
+  if (!hasExactKeys(expected, new Set(["title", "text", "structure", "headings", "stats"]))) throw invalidPlan();
   if (typeof expected.title !== "string" || !expected.title.trim()) throw invalidPlan();
   if (typeof expected.text !== "string" || !expected.text.trim()) throw invalidPlan();
   if (!hasExactKeys(expected.headings, new Set(["h2", "h3"]))) throw invalidPlan();
   if (!Array.isArray(expected.headings.h2) || !Array.isArray(expected.headings.h3)) throw invalidPlan();
   if ([...expected.headings.h2, ...expected.headings.h3].some(value => typeof value !== "string")) {
+    throw invalidPlan();
+  }
+  try {
+    assertCanonicalStructure(expected.structure);
+  } catch {
     throw invalidPlan();
   }
   if (!hasExactKeys(expected.stats, new Set([
@@ -102,7 +108,7 @@ function buildActions({ accountId, target, mode }) {
 export function assertReadBridgePlan(plan, options = {}) {
   if (!hasExactKeys(plan, PLAN_KEYS)) throw invalidPlan();
   if (
-    plan.version !== 1 ||
+    plan.version !== 2 ||
     plan.type !== "aqsh-note-existing-chrome-read" ||
     !MODES.has(plan.mode) ||
     plan.accountId !== "aqsh" ||
@@ -118,11 +124,20 @@ export function assertReadBridgePlan(plan, options = {}) {
     if (plan.source !== null || plan.expected !== null) throw invalidPlan();
   } else {
     if (
-      !hasExactKeys(plan.source, new Set(["path", "sha256"])) ||
+      !hasExactKeys(plan.source, new Set(["path", "sha256", "renderedContentSha256"])) ||
       typeof plan.source.path !== "string" || !path.isAbsolute(plan.source.path) ||
-      !/^[a-f0-9]{64}$/.test(plan.source.sha256)
+      !/^[a-f0-9]{64}$/.test(plan.source.sha256) ||
+      !/^[a-f0-9]{64}$/.test(plan.source.renderedContentSha256)
     ) throw invalidPlan();
     assertExpectedSnapshot(plan.expected);
+    try {
+      if (renderedContentSha256({
+        title: plan.expected.title,
+        structure: plan.expected.structure
+      }) !== plan.source.renderedContentSha256) throw invalidPlan();
+    } catch {
+      throw invalidPlan();
+    }
   }
   assertSafeReadUiActionPlan(plan.actions, { mode: plan.mode, key: plan.target.key });
 
@@ -147,22 +162,30 @@ export function createReadBridgePlan({ run, config, target, mode, article = null
     throw invalidPlan();
   }
   if (config.account?.id !== "aqsh") throw invalidPlan();
-  if (mode === "verify" && (!article?.sourceSha256 || !article?.sourcePath)) throw invalidPlan();
+  if (
+    mode === "verify" &&
+    (!article?.sourceSha256 || !article?.renderedContentSha256 || !article?.sourcePath || !article?.structure)
+  ) throw invalidPlan();
   const createdAt = new Date(now);
   if (!Number.isFinite(createdAt.getTime())) throw invalidPlan();
   const source = mode === "verify"
-    ? { path: article.sourcePath, sha256: article.sourceSha256 }
+    ? {
+        path: article.sourcePath,
+        sha256: article.sourceSha256,
+        renderedContentSha256: article.renderedContentSha256
+      }
     : null;
   const expected = mode === "verify"
     ? {
         title: article.title,
         text: article.text,
+        structure: article.structure,
         headings: article.headings,
         stats: article.stats
       }
     : null;
   const payload = {
-    version: 1,
+    version: 2,
     type: "aqsh-note-existing-chrome-read",
     mode,
     runId: run.runId,

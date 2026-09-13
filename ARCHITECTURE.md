@@ -34,7 +34,7 @@ Markdown、画像、Git履歴が正本です。noteは配信先であり、note�
 - 診断用persistent profileは排他利用し、既存Chrome接続ではnote専用の作業タブを1実行につき1つだけ扱う
 - UI操作を一箇所へ集約し、計画生成時と実行直前の両方で全操作を許可リスト検査する
 - browser入口でNode 24、macOS、Google Chrome、Git root/origin、公開禁止を共通検査する
-- 保存後スナップショットを比較する
+- 保存後スナップショットを比較し、検証済みbaselineと最新inspectから更新前競合を判定する
 - 機密値を除外した証跡を残す
 
 ### Playwright
@@ -52,7 +52,7 @@ Markdown、画像、Git履歴が正本です。noteは配信先であり、note�
 | Gitリポジトリ | 原稿・画像・コード・設定の正本 |
 | 既存Chrome | 認証済みの実行面。Codexブラウザ連携だけで可視UIを操作し、profile/Cookieは取得しない |
 | note専用profile | 診断用の代替経路。Git外。現環境ではセッション再利用不可のため主経路ではない |
-| runtime state | redaction済み`result.json`、期限付き`browser-plan.json`、権限`0600`の完全本文`snapshot.json`、本人確認後の許可済み本文画面だけの証跡。Git外。ログイン・登録・設定・外部画面の撮影とraw Playwright traceは禁止 |
+| runtime state | redaction済み`result.json`、期限付き`browser-plan.json`、権限`0600`の完全本文`snapshot.json`と`conflict-report.json`、本人確認後の許可済み本文画面だけの証跡。Git外。ログイン・登録・設定・外部画面の撮影とraw Playwright traceは禁止 |
 | note公開ページ | 読み取り対象。ただし管理対象URLを検証 |
 | note編集画面 | 書き込み対象。既存Chrome内の専用作業タブと、同時実行禁止が必須 |
 | 外部認証画面 | ユーザーによる手動操作のみ。DOMを収集しない |
@@ -60,16 +60,18 @@ Markdown、画像、Git履歴が正本です。noteは配信先であり、note�
 ## 4. 実行パイプライン
 
 1. 設定を読み、Aqshアカウント、プロジェクト内content root、指定Git origin、公開禁止を検証する。`dry-run`成功時は`git_verified: true`を返す。
-2. Markdownを読み、title、本文HTML、画像、見出し、リンク、可視文字数を決定する。
+2. Markdownを読み、title、本文HTML、画像、見出し、リンク、可視文字数、正規化構造と描画内容SHA-256を決定する。
 3. `preflight`でCriticalとWarningを分け、有効なnote URL/keyだけから新規`draft`か`update`かを確定する。
 4. Criticalがあればブラウザを開かず終了する。
 5. 既存Chromeのnote専用タブで`https://note.com/settings/account/note_id`を直接開き、`name=urlname`かつ`aria-label=note ID`の可視入力欄が1件だけで、値が`aqsh`であることを実行ごとに確認する。
 6. 同じChromeにnote専用の作業タブを作り、許可URLへだけ移動する。
 7. 下書き操作の各actionを実行直前にも再検査する。スクリーンショットは本人確認後かつquery/hashなしの許可済み編集・管理記事URLだけで取得できる。ログイン、登録、設定、外部URLでは拒否し、raw Playwright traceは全操作で無効化する。
 8. 保存後の実画面を読み、ローカル期待値と比較する。
-9. `result.json`へ結果を書き、必ず`published: false`を返す。
+9. 読み取り専用の`inspect / verify`では本文DOMを許可タグ・意味属性だけのcanonical structureへ変換し、可視文字列と構造を別々に検証する。
+10. 更新前は、原稿の`last_synced_at`以後に成功した`verify`をbaselineとし、同じ対象に対する10分以内の`inspect`と比較する。note側差分があれば停止する。
+11. `result.json`へ結果を書き、必ず`published: false`を返す。
 
-title/body/save/publish-controlのtext-only UI契約は`note-text-editor-2026-09-v1`として固定済みである。新規`draft`はタイトル・本文入力、`下書き保存`、再読込QAまで、既存noteの`inspect / verify`は入力・クリック・保存なしの読み取りとGit正本比較まで実アカウントで確認済みである。各操作はaction別schemaと固定順序planをbrowser executorが実行直前にも検査する。画像、アイキャッチ、既存記事の`update`はhard stopを維持し、CLIを迂回して操作しない。
+title/body/save/publish-controlのtext-only UI契約は`note-text-editor-2026-09-v1`として固定済みである。新規`draft`はタイトル・本文入力、`下書き保存`、再読込QAまで、既存noteの`inspect / verify`は入力・クリック・保存なしの読み取り、snapshot v2のcanonical structure、Git正本比較まで実アカウントで確認済みである。検証済みbaselineと最新inspectによるreport v2の`conflict-check`も実アカウントで確認済みである。各操作はaction別schemaと固定順序planをbrowser executorが実行直前にも検査する。画像、アイキャッチ、既存記事の`update`はhard stopを維持し、CLIを迂回して操作しない。
 
 認証は投稿ボタンの有無だけでは成立させません。note ID専用設定画面の単一入力欄が`aqsh`と一致した場合だけ、その実行中の管理対象セッションとして受理します。この確認を永続証明へ置き換えません。raw Playwright traceは通信情報を含み得るため生成しません。
 
@@ -81,4 +83,6 @@ UIの安全契約は`src/browser/`、既存Chrome接続の操作手順はSkill�
 
 ## 6. 更新競合
 
-既存記事更新は、note現状のスナップショットと前回同期fingerprintが一致する場合だけ許可します。人がnote側を修正した可能性があれば停止し、beforeバックアップと差分を提示します。公開済み記事の更新UIが外部反映を伴う場合は、MVPの自動化対象にしません。
+`conflict-check`は、前回同期後に成功した`verify` snapshotをbaselineとして、その原稿パス・raw source SHA-256・描画内容SHA-256・記事key・URL・run・plan digestを再検査します。現在状態には同じ記事を10分以内に取得した`inspect` snapshot v2を要求し、title、空白正規化後の全文、H2/H3、画像数、リンクURL・リスト・引用・強調を含むcanonical structure、指紋、重複をbaselineと比較します。
+
+note側に差分があれば`status: conflict`、`update_allowed: false`で停止します。before/currentの本文と構造はGit外・権限`0600`の`conflict-report.json`だけへ保存し、標準出力と`result.json`にはhash、統計、理由だけを残します。noteがbaselineと一致し、ローカルの描画内容SHAだけが変わった場合は競合ゲートとして`update_allowed: true`を返します。frontmatterだけの変更はraw source変更として記録しますが、note本文の更新対象にはしません。既存記事への書き込み機能は別のhard stopのままであり、公開済み記事の更新UIが外部反映を伴う場合はMVPの自動化対象にしません。

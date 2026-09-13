@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
+import { renderedContentSha256 } from "../../src/structure.mjs";
 
 async function loadSut() {
   try {
@@ -12,6 +13,13 @@ async function loadSut() {
     return {};
   }
 }
+
+const structure = [{
+  type: "element",
+  tag: "p",
+  attrs: {},
+  children: [{ type: "text", value: "概要 本文です。" }]
+}];
 
 function fixture() {
   return {
@@ -31,7 +39,9 @@ function fixture() {
       title: "読取テスト",
       sourcePath: "/repo/articles/aqsh-read-test/article.md",
       sourceSha256: "a".repeat(64),
+      renderedContentSha256: renderedContentSha256({ title: "読取テスト", structure }),
       text: "概要 本文です。",
+      structure,
       headings: { h2: ["概要"], h3: [] },
       stats: { bodyCharacters: 8, h2: 1, h3: 0, images: 0, links: 0, externalLinks: 0 }
     }
@@ -54,6 +64,7 @@ test("creates a short-lived inspect plan without article content", async () => {
   });
 
   assert.equal(plan.type, "aqsh-note-existing-chrome-read");
+  assert.equal(plan.version, 2);
   assert.equal(plan.mode, "inspect");
   assert.equal(plan.source, null);
   assert.equal(plan.expected, null);
@@ -78,11 +89,29 @@ test("creates a verify plan bound to the current article source", async () => {
   assert.equal(plan.mode, "verify");
   assert.deepEqual(plan.source, {
     path: "/repo/articles/aqsh-read-test/article.md",
-    sha256: "a".repeat(64)
+    sha256: "a".repeat(64),
+    renderedContentSha256: renderedContentSha256({ title: "読取テスト", structure })
   });
   assert.equal(plan.expected.title, "読取テスト");
+  assert.deepEqual(plan.expected.structure, structure);
   assert.equal(plan.actions.at(-1).kind, "verify");
   assert.match(plan.sha256, /^[a-f0-9]{64}$/);
+});
+
+test("rejects a verify plan whose rendered-content digest does not match its expectation", async () => {
+  const { createReadBridgePlan } = await loadSut();
+  const base = fixture();
+
+  assert.throws(
+    () => createReadBridgePlan({
+      ...base,
+      article: { ...base.article, renderedContentSha256: "b".repeat(64) },
+      run: { ...base.run, action: "verify" },
+      mode: "verify",
+      now: new Date("2026-09-13T11:00:00.000Z")
+    }),
+    error => error?.code === "BROWSER_PLAN_INVALID"
+  );
 });
 
 test("rejects expired, tampered, retargeted, and cross-mode read plans", async () => {

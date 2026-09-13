@@ -4,7 +4,7 @@
 
 ## 現在のhard stop
 
-`draft / inspect / verify`はaction別schemaと固定順序を持つ期限付きplanを生成する。text-onlyエディタ契約は`note-text-editor-2026-09-v1`として固定し、実アカウントで新規下書きのHTML貼付・明示保存・再読込QAと、既存下書きのread-only検査・Git正本比較まで確認済みである。画像、アイキャッチ、既存記事更新、`update`は停止したままとする。
+`draft / inspect / verify`はaction別schemaと固定順序を持つ期限付きplanを生成する。text-onlyエディタ契約は`note-text-editor-2026-09-v1`として固定し、実アカウントで新規下書きのHTML貼付・明示保存・再読込QAと、既存下書きのsnapshot v2によるread-only構造検査・Git正本比較・更新前競合判定まで確認済みである。画像、アイキャッチ、既存記事更新、`update`は停止したままとする。
 
 HTML貼付で確認済みの書式は段落、H2、H3、箇条書きである。インラインcode要素は文字を保ったままプレーンテキスト化されたため、記事原稿ではその装飾に依存しない。
 
@@ -52,9 +52,17 @@ HTML貼付で確認済みの書式は段落、H2、H3、箇条書きである。
 1. `inspect https://note.com/aqsh/n/<key> --json`または、対象をfrontmatterへ結び付けた原稿で`verify <article.md> --json`を実行する。
 2. `validate-plan <browser-plan.json> --json`で期限、run、改ざん、対象keyとURL、`verify`では現在の原稿SHA-256を再検査する。
 3. planどおりにnote ID `aqsh`を確認し、同じChromeの新しいnote専用タブで固定された`https://editor.note.com/notes/<key>/edit/`だけを開く。
-4. title/body/save/publish要素が固定済みUI契約どおりであることを確認し、タイトル、本文、H2/H3、本文画像数だけを読む。入力、貼付、クリック、保存、再読込は行わない。
-5. exact schemaの観測JSONを`record-inspect`または`record-verify`へ渡す。完全な本文はGit外の`snapshot.json`へ権限`0600`で保存し、標準出力と`result.json`には本文のSHA-256と統計だけを残す。
+4. title/body/save/publish要素が固定済みUI契約どおりであることを確認し、タイトル、本文、H2/H3、本文画像数と正規化DOM構造だけを読む。構造の許可タグ・属性・正規化規則は [editor-structure.md](editor-structure.md) に完全一致させる。入力、貼付、クリック、保存、再読込は行わない。
+5. snapshot v2のexact schemaに合う観測JSONを`record-inspect`または`record-verify`へ渡す。完全な本文と構造はGit外の`snapshot.json`へ権限`0600`で保存し、標準出力と`result.json`には本文と構造のSHA-256および統計だけを残す。
 6. `verify`で1項目でも不一致なら失敗として停止し、修正や再試行、`update`へ自動移行しない。
+
+## 更新前の競合判定
+
+1. 前回同期後に成功した`verify`の`snapshot.json`をbaselineにする。原稿の`last_synced_at`より古いsnapshot、失敗したverify、別原稿・別keyのsnapshotは使わない。
+2. 上記の読み取り手順で同じ記事へ`inspect`を実行し、観測から10分以内にcurrent `snapshot.json`を作る。
+3. `aqsh-note conflict-check <article.md> <baseline-snapshot.json> <current-snapshot.json> --json`を実行する。
+4. `status: conflict`または`update_allowed: false`なら書き込まない。タイトル、全文、リンク先、リスト・引用・強調などの構造を比較し、before/current本体はGit外・権限`0600`の`conflict-report.json`だけで確認する。
+5. `update_allowed: true`でも、既存記事の保存UI契約が別途実機確認されるまで`update`は実行しない。
 
 ## 証跡と終了
 

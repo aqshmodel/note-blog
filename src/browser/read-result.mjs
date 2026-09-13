@@ -3,7 +3,8 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { normalizeVisibleText } from "../article.mjs";
 import { AqshNoteError } from "../errors.mjs";
-import { parseNoteEditorUrl } from "../note-url.mjs";
+import { parseManagedNoteUrl, parseNoteEditorUrl } from "../note-url.mjs";
+import { assertCanonicalStructure, structureSha256 } from "../structure.mjs";
 import { compareArticleSnapshots } from "../verify.mjs";
 import { textEditorContract } from "./editor-contract.mjs";
 import { assertReadBridgePlan } from "./read-plan.mjs";
@@ -13,6 +14,7 @@ const OBSERVATION_KEYS = new Set([
   "url",
   "title",
   "text",
+  "structure",
   "h2",
   "h3",
   "imageCount",
@@ -30,6 +32,7 @@ const SNAPSHOT_KEYS = new Set([
   "note",
   "title",
   "text",
+  "structure",
   "h2",
   "h3",
   "imageCount",
@@ -41,6 +44,13 @@ function invalidObservation() {
   return new AqshNoteError(
     "READ_OBSERVATION_INVALID",
     "noteの読み取り観測を安全に確認できないため停止しました。"
+  );
+}
+
+function invalidSnapshot() {
+  return new AqshNoteError(
+    "READ_SNAPSHOT_INVALID",
+    "noteの読み取りスナップショットを安全に確認できないため停止しました。"
   );
 }
 
@@ -86,22 +96,67 @@ function validateObservation(plan, observation) {
   if (editor.key !== plan.target.key || editor.canonicalUrl !== plan.target.editorUrl) {
     throw invalidObservation();
   }
-  return { ...observation, url: editor.canonicalUrl };
+  let structure;
+  try {
+    structure = assertCanonicalStructure(observation.structure);
+  } catch {
+    throw invalidObservation();
+  }
+  return { ...observation, url: editor.canonicalUrl, structure };
 }
 
-function assertSnapshot(snapshot, run) {
+export function assertReadSnapshot(snapshot, options = {}) {
   if (
     !hasExactKeys(snapshot, SNAPSHOT_KEYS) ||
-    snapshot.version !== 1 ||
+    snapshot.version !== 2 ||
     snapshot.type !== "aqsh-note-read-snapshot" ||
-    snapshot.runId !== run?.runId ||
-    snapshot.mode !== run?.action ||
+    !new Set(["inspect", "verify"]).has(snapshot.mode) ||
+    typeof snapshot.runId !== "string" || !snapshot.runId ||
     snapshot.accountId !== "aqsh" ||
+    typeof snapshot.observedAt !== "string" ||
+    typeof snapshot.title !== "string" ||
+    typeof snapshot.text !== "string" ||
+    !strings(snapshot.h2) ||
+    !strings(snapshot.h3) ||
+    !Number.isInteger(snapshot.imageCount) || snapshot.imageCount < 0 ||
     snapshot.mutated !== false ||
     !/^[a-f0-9]{64}$/.test(snapshot.sha256)
-  ) throw invalidObservation();
+  ) throw invalidSnapshot();
+  if (options.expectedRunId && snapshot.runId !== options.expectedRunId) throw invalidSnapshot();
+  if (options.expectedMode && snapshot.mode !== options.expectedMode) throw invalidSnapshot();
+
+  const observedAt = Date.parse(snapshot.observedAt);
+  if (!Number.isFinite(observedAt) || new Date(observedAt).toISOString() !== snapshot.observedAt) {
+    throw invalidSnapshot();
+  }
+  if (!hasExactKeys(snapshot.note, new Set(["key", "editorUrl", "publicUrl"]))) {
+    throw invalidSnapshot();
+  }
+  let publicTarget;
+  let editorTarget;
+  try {
+    publicTarget = parseManagedNoteUrl(snapshot.note.publicUrl, snapshot.accountId);
+    editorTarget = parseNoteEditorUrl(snapshot.note.editorUrl);
+  } catch {
+    throw invalidSnapshot();
+  }
+  if (
+    snapshot.note.key !== publicTarget.key ||
+    snapshot.note.key !== editorTarget.key ||
+    snapshot.note.publicUrl !== publicTarget.canonicalUrl ||
+    snapshot.note.editorUrl !== editorTarget.canonicalUrl
+  ) throw invalidSnapshot();
+
+  let canonicalStructure;
+  try {
+    canonicalStructure = assertCanonicalStructure(snapshot.structure);
+  } catch {
+    throw invalidSnapshot();
+  }
+  if (JSON.stringify(canonicalStructure) !== JSON.stringify(snapshot.structure)) throw invalidSnapshot();
+
   const { sha256: _sha256, ...payload } = snapshot;
-  if (digestPayload(payload) !== snapshot.sha256) throw invalidObservation();
+  if (digestPayload(payload) !== snapshot.sha256) throw invalidSnapshot();
   return snapshot;
 }
 
@@ -113,7 +168,7 @@ export function createReadResult(plan, observation, options = {}) {
   if (!Number.isFinite(observedAt.getTime())) throw invalidObservation();
 
   const snapshotPayload = {
-    version: 1,
+    version: 2,
     type: "aqsh-note-read-snapshot",
     mode: validatedPlan.mode,
     runId: validatedPlan.runId,
@@ -126,6 +181,7 @@ export function createReadResult(plan, observation, options = {}) {
     },
     title: validatedObservation.title,
     text: validatedObservation.text,
+    structure: validatedObservation.structure,
     h2: [...validatedObservation.h2],
     h3: [...validatedObservation.h3],
     imageCount: validatedObservation.imageCount,
@@ -137,12 +193,14 @@ export function createReadResult(plan, observation, options = {}) {
     ? compareArticleSnapshots({
         title: validatedPlan.expected.title,
         text: validatedPlan.expected.text,
+        structure: validatedPlan.expected.structure,
         h2: validatedPlan.expected.headings.h2,
         h3: validatedPlan.expected.headings.h3,
         imageCount: validatedPlan.expected.stats.images
       }, {
         title: validatedObservation.title,
         text: validatedObservation.text,
+        structure: validatedObservation.structure,
         h2: validatedObservation.h2,
         h3: validatedObservation.h3,
         imageCount: validatedObservation.imageCount
@@ -164,6 +222,7 @@ export function createReadResult(plan, observation, options = {}) {
     actual: {
       title: validatedObservation.title,
       text_sha256: createHash("sha256").update(normalizedText, "utf8").digest("hex"),
+      structure_sha256: structureSha256(validatedObservation.structure),
       stats: {
         bodyCharacters: normalizedText.length,
         h2: validatedObservation.h2.length,
@@ -182,7 +241,10 @@ export function createReadResult(plan, observation, options = {}) {
 }
 
 export async function writeReadSnapshot(run, snapshot) {
-  assertSnapshot(snapshot, run);
+  assertReadSnapshot(snapshot, {
+    expectedRunId: run?.runId,
+    expectedMode: run?.action
+  });
   const destination = path.join(run.directory, "snapshot.json");
   await writeFile(destination, `${JSON.stringify(snapshot, null, 2)}\n`, {
     encoding: "utf8",

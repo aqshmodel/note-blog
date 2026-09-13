@@ -6,18 +6,19 @@ Aqshのnoteアカウント [`note.com/aqsh`](https://note.com/aqsh) を、Markdo
 
 ## 現在の到達点
 
-Phase 0とPhase 1前半を実装済みです。
+Phase 0、Phase 1前半、Phase 4の更新前競合ゲートを実装済みです。
 
 - `doctor`: Node、Playwright、Chrome、Git、設定、安全ガードを確認
 - 既存Chrome接続: Cookieをコピーせず、`/settings/account/note_id`の単一入力欄が`aqsh`であることを実行ごとに確認
 - `login`: 専用プロファイル方式の診断用コマンド。現環境ではnoteのログイン状態を再利用できないため主経路にはしない
 - `dry-run`: Git root/origin、原稿・画像・URLをブラウザなしで検証し、`git_verified: true`と`intended_action`を確定
 - `draft`: 既存Chrome用の期限10分・改ざん検知付き固定planを準備。単独ではブラウザを開かず、入力・保存もしない。固定済みtext-only UI契約で新規下書きを実行可能
-- `inspect`: Aqsh配下の既存noteを変更せずに読み取り、本文全文をGit外のprivate snapshotへ保存
-- `verify`: `note.key`または`note.url`で結び付いたMarkdown正本と、既存noteのタイトル・本文・H2/H3・画像数・重複を比較
-- `validate-plan`: browser操作直前にplanの期限・run ID・改ざん・対象URL・現在の原稿SHA-256を再検査する内部ゲート
+- `inspect`: Aqsh配下の既存noteを変更せずに読み取り、本文全文と正規化DOM構造をGit外のprivate snapshot v2へ保存
+- `verify`: `note.key`または`note.url`で結び付いたMarkdown正本と、既存noteのタイトル・本文・H2/H3・画像数・正規化DOM構造・重複を比較
+- `conflict-check`: 前回の成功した`verify`を同期基準に、10分以内の`inspect`と比較して、同じ文字列のリンク先変更やリスト・引用・強調の変更を含むnote側の手修正を検知。本文と構造を含む差分根拠はGit外のprivate reportだけへ保存
+- `validate-plan`: browser操作直前にplanの期限・run ID・改ざん・対象URL・現在の原稿SHA-256を再検査する内部ゲート。verify planはraw sourceと描画内容を別々のSHA-256へ拘束
 - `recover`: リポジトリ外の実行証跡を読み取り専用で一覧化
-- MarkdownのH1/title解決、HTML変換、見出し・画像・リンク・可視文字数の算出
+- MarkdownのH1/title解決、HTML変換、見出し・画像・リンク・可視文字数・正規化構造の算出
 - 保存後QA用のタイトル、本文長、見出し、画像数、指紋、重複比較
 - profile排他ロック、機密値redaction、`result.json`、本文操作用screenshotの基盤（本人確認後かつ許可済み編集・記事URLだけ。ログイン・設定画面とraw Playwright traceは撮影禁止）
 - 公開コマンドなし。公開・投稿・公開済み記事更新に相当するUI操作をコードで拒否
@@ -25,7 +26,7 @@ Phase 0とPhase 1前半を実装済みです。
 - 設定は既知キーだけを許可し、認証情報・未知キーの混入を拒否
 - frontmatterは`yaml`パーサーへ固定し、`---js`等の実行可能な言語タグを読み込み前に拒否
 
-現行noteエディタのtext-only UI契約は実画面から固定し、非公開下書きのHTML貼付、明示保存、再読込QAまで実アカウントで確認済みです。画像配置と既存記事更新は引き続き未実装です。未確認のUIを推測して本番アカウントへ書き込まない設計です。詳細は [実装状況](docs/IMPLEMENTATION_STATUS.md) を参照してください。
+現行noteエディタのtext-only UI契約は実画面から固定し、非公開下書きのHTML貼付、明示保存、再読込QA、snapshot v2の本文構造検証、既存下書きの更新前競合判定まで実アカウントで確認済みです。画像配置と既存記事への書き込みは引き続き未実装です。未確認のUIを推測して本番アカウントへ書き込まない設計です。詳細は [実装状況](docs/IMPLEMENTATION_STATUS.md) を参照してください。
 
 ## セットアップ
 
@@ -58,6 +59,13 @@ npm run aqsh-note -- inspect https://note.com/aqsh/n/<key> --json
 # note.keyまたはnote.urlを持つ原稿と既存noteを比較するplanを準備
 npm run aqsh-note -- verify articles/<article-id>/article.md --json
 
+# 検証済みbaselineと10分以内のinspect snapshotで更新前競合を判定
+npm run aqsh-note -- conflict-check \
+  articles/<article-id>/article.md \
+  ~/.local/state/aqsh-note/runs/<baseline-verify-run>/snapshot.json \
+  ~/.local/state/aqsh-note/runs/<current-inspect-run>/snapshot.json \
+  --json
+
 # 失敗時の証跡一覧
 npm run aqsh-note -- recover
 ```
@@ -70,7 +78,11 @@ AqshアカウントではGoogleログインを選ぶと未連携アカウント�
 
 リポジトリの`bin/aqsh-note`は`.nvmrc`と同じNodeを選ぶため、`~/.local/bin`へリンクした後は`aqsh-note doctor`の短い形でも実行できます。
 
-`draft`、`inspect`、`verify`は既存Chrome用planを準備します。CLI単体ではブラウザを操作せず、Codexの既存Chrome executorがplanを検証してから固定手順を実行します。`inspect`と`verify`は入力・クリック・保存を行わない読み取り専用です。完全な本文snapshotは権限`0600`でGit外へ保存し、標準出力と`result.json`には本文を含めません。ユーザーが新規下書きを依頼したtext-only原稿は、固定済みUI契約で入力・下書き保存・再読込検証できます。`/notes/new`を開く時点で空の下書き枠が生成され得ます。画像、アイキャッチ、既存記事の`update`は停止中です。`publish`コマンドは今後も作りません。
+`draft`、`inspect`、`verify`は既存Chrome用planを準備します。CLI単体ではブラウザを操作せず、Codexの既存Chrome executorがplanを検証してから固定手順を実行します。`inspect`と`verify`は入力・クリック・保存を行わない読み取り専用です。完全な本文と正規化DOM構造のsnapshotは権限`0600`でGit外へ保存し、標準出力と`result.json`には本文・構造本体を含めません。
+
+`conflict-check`自体はブラウザを起動しません。原稿の`last_synced_at`以後に成功した`verify` snapshotと、同じアカウント・記事keyに対する10分以内の`inspect` snapshotを指定します。baselineと現在のnoteが違えば`status: conflict`で停止します。一致し、ローカルの描画内容がbaselineから変わっている場合の`update_allowed: true`は「競合ゲートが通った」という意味であり、`update`コマンドやnoteへの書き込みが有効になったという意味ではありません。frontmatterだけの変更はraw source変更として記録しますが、本文更新は不要と判定します。
+
+ユーザーが新規下書きを依頼したtext-only原稿は、固定済みUI契約で入力・下書き保存・再読込検証できます。`/notes/new`を開く時点で空の下書き枠が生成され得ます。画像、アイキャッチ、既存記事の`update`は停止中です。`publish`コマンドは今後も作りません。
 
 ## 記事の作り方
 
@@ -98,7 +110,7 @@ Git管理するもの:
 Git管理しないもの:
 
 - `~/.cache/aqsh-note/chrome-profile`: 診断用のnote専用Chromeプロファイル（現在は主経路で不使用）
-- `~/.local/state/aqsh-note/runs`: `browser-plan.json`、`result.json`、private `snapshot.json`、許可された本文操作のスクリーンショット
+- `~/.local/state/aqsh-note/runs`: `browser-plan.json`、`result.json`、private `snapshot.json`、private `conflict-report.json`、許可された本文操作のスクリーンショット
 - Cookie、storageState、パスワード、セッション値
 
 設定読み込み時に、Chromeプロファイルとruntime stateがGitリポジトリまたはcontent rootと重なる構成を拒否します。raw Playwright traceは通信ヘッダーやCookieを記録し得るため、全操作で無効です。将来、認証情報を記録しない診断形式を実装・検証するまで有効化しません。
@@ -118,6 +130,7 @@ Git管理しないもの:
 - UI操作計画の全要素を許可リストで検査し、将来のexecutorでも実行直前に同じ検査を必須とする
 - browser入口ではNode 24、macOS、Google Chrome、Git root/origin、公開禁止を共通ゲートで再検査する
 - verify不一致時は再試行せず停止する
+- 更新前は、検証済みbaselineと10分以内のinspectを`conflict-check`へ渡し、note側に差分があれば上書きせず停止する
 - 公開は塚田さんがnote画面で最終確認して手動実行する
 
 ## 開発・検証

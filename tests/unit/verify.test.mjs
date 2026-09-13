@@ -38,9 +38,35 @@ test("accepts an equivalent rendered snapshot", async () => {
     text: true,
     headings: true,
     images: true,
+    structure: true,
     fingerprint: true,
     duplication: false
   });
+});
+
+test("fails when identical visible link text points to a different URL", async () => {
+  const { compareArticleSnapshots } = await loadSut();
+  const linkStructure = href => [{
+    type: "element",
+    tag: "p",
+    attrs: {},
+    children: [{
+      type: "element",
+      tag: "a",
+      attrs: { href },
+      children: [{ type: "text", value: expected.text }]
+    }]
+  }];
+
+  const result = compareArticleSnapshots(
+    { ...expected, structure: linkStructure("https://example.com/a") },
+    { ...expected, structure: linkStructure("https://example.com/b") }
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.checks.text, true);
+  assert.equal(result.checks.structure, false);
+  assert.ok(result.reasons.includes("structure_mismatch"));
 });
 
 test("detects duplicated body content", async () => {

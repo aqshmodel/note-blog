@@ -7,7 +7,7 @@ import { loadConfig } from "./config.mjs";
 import { assertManagedGitSource, runDoctor } from "./doctor.mjs";
 import { AqshNoteError, toPublicError } from "./errors.mjs";
 import { preflightArticle } from "./preflight.mjs";
-import { isPathWithinRoot } from "./path-safety.mjs";
+import { canonicalizePathWithMissingTail, isPathWithinRoot } from "./path-safety.mjs";
 import { createRunContext, listRecoveryRuns, redactSecrets, writeRunResult } from "./state.mjs";
 import { runLogin } from "./commands/login.mjs";
 import {
@@ -21,8 +21,9 @@ import {
   createReadBridgePlan,
   writeReadBridgePlan
 } from "./browser/read-plan.mjs";
-import { createReadResult, writeReadSnapshot } from "./browser/read-result.mjs";
+import { assertReadSnapshot, createReadResult, writeReadSnapshot } from "./browser/read-result.mjs";
 import { assertAllowedNoteNavigation } from "./browser/safety.mjs";
+import { assessSyncConflict, writeConflictReport } from "./conflict.mjs";
 import { parseManagedNoteUrl, validateNoteKey } from "./note-url.mjs";
 
 const projectRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -35,6 +36,7 @@ const supportedCommands = new Set([
   "draft",
   "inspect",
   "verify",
+  "conflict-check",
   "validate-plan",
   "record-draft",
   "record-inspect",
@@ -135,6 +137,21 @@ function printHuman(result) {
     console.log(`snapshot: ${result.snapshot?.path ?? "not written"}`);
     if (result.verification) console.log(`matched: ${String(result.verification.ok)}`);
     console.log("browser state changed: false");
+    console.log("published: false");
+    return;
+  }
+  if (result.action === "conflict-check") {
+    console.log(`conflict-check: ${result.status}`);
+    console.log(`note: ${result.note?.key ?? "unknown"}`);
+    console.log(`conflict: ${String(result.conflict?.detected ?? "unknown")}`);
+    console.log(`source changed: ${String(result.article?.source_changed_since_baseline ?? "unknown")}`);
+    console.log(`rendered content changed: ${String(result.article?.rendered_content_changed_since_baseline ?? "unknown")}`);
+    console.log(`update needed: ${String(result.update_needed)}`);
+    console.log(`update precondition: ${result.update_allowed ? "clear" : "blocked"}`);
+    console.log(`report: ${result.report?.path ?? "not written"}`);
+    console.log("browser: not launched");
+    console.log("browser state changed: false");
+    console.log("saved: false");
     console.log("published: false");
     return;
   }
@@ -493,6 +510,161 @@ async function loadManagedBrowserPlan(config, planPath, { requireFresh, expected
   return { absolutePlanPath, run, plan: validatedPlan };
 }
 
+async function loadManagedReadSnapshot(config, snapshotPath, expectedMode) {
+  if (!snapshotPath) {
+    throw new AqshNoteError("READ_SNAPSHOT_REQUIRED", "snapshot.jsonを指定してください。");
+  }
+  const absoluteSnapshotPath = path.resolve(snapshotPath);
+  const runsRoot = path.resolve(config.paths.stateDir, "runs");
+  const [canonicalSnapshotPath, canonicalRunsRoot] = await Promise.all([
+    canonicalizePathWithMissingTail(absoluteSnapshotPath),
+    canonicalizePathWithMissingTail(runsRoot)
+  ]);
+  const runDirectory = path.dirname(canonicalSnapshotPath);
+  if (
+    path.basename(canonicalSnapshotPath) !== "snapshot.json" ||
+    path.dirname(runDirectory) !== canonicalRunsRoot ||
+    !(await isPathWithinRoot(canonicalSnapshotPath, canonicalRunsRoot))
+  ) {
+    throw new AqshNoteError(
+      "READ_SNAPSHOT_PATH_INVALID",
+      "snapshotは専用state root内のrunから指定してください。"
+    );
+  }
+
+  let snapshot;
+  try {
+    snapshot = JSON.parse(await readFile(canonicalSnapshotPath, "utf8"));
+  } catch {
+    throw new AqshNoteError(
+      "READ_SNAPSHOT_INVALID",
+      "noteの読み取りスナップショットを安全に読み込めません。"
+    );
+  }
+  const loadedPlan = await loadManagedBrowserPlan(
+    config,
+    path.join(runDirectory, "browser-plan.json"),
+    { requireFresh: false, expectedType: "read", expectedMode }
+  );
+  const validatedSnapshot = assertReadSnapshot(snapshot, {
+    expectedRunId: loadedPlan.run.runId,
+    expectedMode
+  });
+  return {
+    absoluteSnapshotPath: canonicalSnapshotPath,
+    plan: loadedPlan.plan,
+    snapshot: validatedSnapshot
+  };
+}
+
+async function assertArticleSourceUnchanged(article) {
+  let source;
+  try {
+    source = await readFile(article.sourcePath, "utf8");
+  } catch {
+    throw new AqshNoteError(
+      "ARTICLE_SOURCE_CHANGED",
+      "同期判定中に原稿を再確認できなかったため停止しました。"
+    );
+  }
+  const sourceSha256 = createHash("sha256").update(source, "utf8").digest("hex");
+  if (sourceSha256 !== article.sourceSha256) {
+    throw new AqshNoteError(
+      "ARTICLE_SOURCE_CHANGED",
+      "同期判定中に原稿が変更されたため、もう一度実行してください。"
+    );
+  }
+}
+
+async function handleConflictCheck(config, targets, json) {
+  if (targets.length !== 3) {
+    throw new AqshNoteError(
+      "CONFLICT_CHECK_ARGUMENTS_REQUIRED",
+      "conflict-checkにはarticle.md、検証済みsnapshot、現在のsnapshotが必要です。"
+    );
+  }
+  const [articlePath, baselineSnapshotPath, currentSnapshotPath] = targets;
+  await assertManagedGitSource(config);
+  if (!(await isPathWithinRoot(articlePath, config.paths.contentRoot))) {
+    throw new AqshNoteError(
+      "ARTICLE_OUTSIDE_CONTENT_ROOT",
+      "記事ファイルは設定されたcontent root内に置いてください。"
+    );
+  }
+  const article = await loadArticle(articlePath);
+  const preflight = await preflightArticle(article, {
+    mode: "update",
+    accountId: config.account.id,
+    contentRoot: config.paths.contentRoot,
+    shortBodyCharacters: config.warnings.shortBodyCharacters,
+    externalLinkWarning: config.warnings.externalLinks
+  });
+  if (!preflight.ok) {
+    const run = await createRunContext({
+      stateDir: config.paths.stateDir,
+      action: "conflict-check",
+      articleId: article.id ?? path.basename(article.sourcePath, path.extname(article.sourcePath))
+    });
+    const result = {
+      status: "failed",
+      action: "conflict-check",
+      run_id: run.runId,
+      account: config.account.id,
+      article: { id: article.id, source_path: article.sourcePath },
+      errors: preflight.errors,
+      warnings: preflight.warnings,
+      update_needed: "unknown",
+      update_allowed: false,
+      browser_launched: false,
+      browser_state_changed: false,
+      saved: false,
+      published: false
+    };
+    await writeRunResult(run, result);
+    emit(result, json);
+    return 2;
+  }
+
+  const baseline = await loadManagedReadSnapshot(config, baselineSnapshotPath, "verify");
+  const current = await loadManagedReadSnapshot(config, currentSnapshotPath, "inspect");
+  await assertArticleSourceUnchanged(article);
+  const assessedAt = new Date();
+  assessSyncConflict({
+    article,
+    baselinePlan: baseline.plan,
+    baselineSnapshot: baseline.snapshot,
+    currentPlan: current.plan,
+    currentSnapshot: current.snapshot,
+    now: assessedAt,
+    runId: "preflight"
+  });
+  const run = await createRunContext({
+    stateDir: config.paths.stateDir,
+    action: "conflict-check",
+    articleId: article.id ?? path.basename(article.sourcePath, path.extname(article.sourcePath))
+  });
+  const output = assessSyncConflict({
+    article,
+    baselinePlan: baseline.plan,
+    baselineSnapshot: baseline.snapshot,
+    currentPlan: current.plan,
+    currentSnapshot: current.snapshot,
+    now: assessedAt,
+    runId: run.runId
+  });
+  const reportPath = await writeConflictReport(run, output.report);
+  const result = {
+    ...output.result,
+    errors: [],
+    warnings: preflight.warnings,
+    report: { ...output.result.report, path: reportPath },
+    git_verified: true
+  };
+  await writeRunResult(run, result);
+  emit(result, json);
+  return result.status === "conflict" ? 2 : 0;
+}
+
 async function assertCurrentPlanSource(plan, config) {
   if (!plan.source) return;
   if (!(await isPathWithinRoot(plan.source.path, config.paths.contentRoot))) {
@@ -530,7 +702,8 @@ async function handleValidatePlan(config, planPath, json) {
     plan_mode: loaded.plan.mode ?? "draft",
     article: loaded.plan.expected && loaded.plan.source ? {
       title: loaded.plan.expected.title,
-      source_sha256: loaded.plan.source.sha256
+      source_sha256: loaded.plan.source.sha256,
+      rendered_content_sha256: loaded.plan.source.renderedContentSha256
     } : null,
     note: loaded.plan.target ? {
       key: loaded.plan.target.key,
@@ -669,8 +842,8 @@ function help(json) {
   const result = {
     status: "success",
     action: "help",
-    commands: ["doctor", "login", "dry-run", "draft", "update", "verify", "inspect", "recover"],
-    available_commands: ["doctor", "login", "dry-run", "draft", "verify", "inspect", "recover"],
+    commands: ["doctor", "login", "dry-run", "draft", "update", "verify", "inspect", "conflict-check", "recover"],
+    available_commands: ["doctor", "login", "dry-run", "draft", "verify", "inspect", "conflict-check", "recover"],
     blocked_until_e2e: ["update"],
     note: "公開コマンドはありません。",
     published: false
@@ -684,7 +857,8 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     const parsed = parseArguments(argv);
     options = parsed.options;
-    const [command = "help", target] = parsed.positionals;
+    const [command = "help", ...targets] = parsed.positionals;
+    const [target] = targets;
     if (!supportedCommands.has(command)) {
       throw new AqshNoteError("UNKNOWN_COMMAND", `未対応のコマンドです: ${command}`);
     }
@@ -696,6 +870,7 @@ export async function main(argv = process.argv.slice(2)) {
     if (command === "draft") return await handleDraft(config, target, options.json);
     if (command === "inspect") return await handleInspect(config, target, options.json);
     if (command === "verify") return await handleVerify(config, target, options.json);
+    if (command === "conflict-check") return await handleConflictCheck(config, targets, options.json);
     if (command === "validate-plan") return await handleValidatePlan(config, target, options.json);
     if (command === "record-draft") return await handleRecordDraft(config, target, options.json);
     if (command === "record-inspect") return await handleRecordRead(config, target, "inspect", options.json);

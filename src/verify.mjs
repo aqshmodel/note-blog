@@ -1,5 +1,20 @@
+import { structureSha256 } from "./structure.mjs";
+
 function normalize(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function compareStructure(expected, actual) {
+  if (expected === undefined && actual === undefined) {
+    return { matches: true, expectedSha256: null, actualSha256: null };
+  }
+  try {
+    const expectedSha256 = structureSha256(expected);
+    const actualSha256 = structureSha256(actual);
+    return { matches: expectedSha256 === actualSha256, expectedSha256, actualSha256 };
+  } catch {
+    return { matches: false, expectedSha256: null, actualSha256: null };
+  }
 }
 
 function sameList(expected = [], actual = []) {
@@ -39,6 +54,7 @@ export function compareArticleSnapshots(expectedSnapshot, actualSnapshot, option
   const expectedText = normalize(expectedSnapshot.text);
   const actualText = normalize(actualSnapshot.text);
   const duplicated = isDuplicated(expectedText, actualText);
+  const structure = compareStructure(expectedSnapshot.structure, actualSnapshot.structure);
   const checks = {
     title: normalize(expectedSnapshot.title) === normalize(actualSnapshot.title),
     body: bodyWithinTolerance(expectedText, actualText, tolerance),
@@ -47,6 +63,7 @@ export function compareArticleSnapshots(expectedSnapshot, actualSnapshot, option
       sameList(expectedSnapshot.h2, actualSnapshot.h2) &&
       sameList(expectedSnapshot.h3, actualSnapshot.h3),
     images: Number(expectedSnapshot.imageCount) === Number(actualSnapshot.imageCount),
+    structure: structure.matches,
     fingerprint: hasMatchingFingerprint(expectedText, actualText),
     duplication: duplicated
   };
@@ -57,6 +74,7 @@ export function compareArticleSnapshots(expectedSnapshot, actualSnapshot, option
   if (!checks.text) reasons.push("body_text_mismatch");
   if (!checks.headings) reasons.push("headings_mismatch");
   if (!checks.images) reasons.push("image_count_mismatch");
+  if (!checks.structure) reasons.push("structure_mismatch");
   if (!checks.fingerprint) reasons.push("text_fingerprint_mismatch");
   if (checks.duplication) reasons.push("body_duplicated");
 
@@ -68,13 +86,15 @@ export function compareArticleSnapshots(expectedSnapshot, actualSnapshot, option
       bodyCharacters: expectedText.length,
       h2: expectedSnapshot.h2?.length ?? 0,
       h3: expectedSnapshot.h3?.length ?? 0,
-      images: Number(expectedSnapshot.imageCount ?? 0)
+      images: Number(expectedSnapshot.imageCount ?? 0),
+      structureSha256: structure.expectedSha256
     },
     actual: {
       bodyCharacters: actualText.length,
       h2: actualSnapshot.h2?.length ?? 0,
       h3: actualSnapshot.h3?.length ?? 0,
-      images: Number(actualSnapshot.imageCount ?? 0)
+      images: Number(actualSnapshot.imageCount ?? 0),
+      structureSha256: structure.actualSha256
     }
   };
 }

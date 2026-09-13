@@ -13,9 +13,24 @@ async function loadSut() {
   }
 }
 
+const structure = [
+  {
+    type: "element",
+    tag: "h2",
+    attrs: {},
+    children: [{ type: "text", value: "概要" }]
+  },
+  {
+    type: "element",
+    tag: "p",
+    attrs: {},
+    children: [{ type: "text", value: "本文です。" }]
+  }
+];
+
 function plan(mode = "inspect") {
   return {
-    version: 1,
+    version: 2,
     type: "aqsh-note-existing-chrome-read",
     mode,
     runId: `20260913-200000-aqsh-${mode}-test`,
@@ -28,12 +43,17 @@ function plan(mode = "inspect") {
       editorUrl: "https://editor.note.com/notes/n9b5c6afb2521/edit/"
     },
     source: mode === "verify"
-      ? { path: "/repo/articles/test/article.md", sha256: "a".repeat(64) }
+      ? {
+          path: "/repo/articles/test/article.md",
+          sha256: "a".repeat(64),
+          renderedContentSha256: "c".repeat(64)
+        }
       : null,
     expected: mode === "verify"
       ? {
           title: "読取テスト",
           text: "概要 本文です。",
+          structure,
           headings: { h2: ["概要"], h3: [] },
           stats: { bodyCharacters: 8, h2: 1, h3: 0, images: 0, links: 0, externalLinks: 0 }
         }
@@ -50,6 +70,7 @@ function observation(overrides = {}) {
     url: "https://editor.note.com/notes/n9b5c6afb2521/edit/",
     title: "読取テスト",
     text: "概要\n\n本文です。",
+    structure,
     h2: ["概要"],
     h3: [],
     imageCount: 0,
@@ -75,6 +96,7 @@ test("creates a private inspect snapshot without reflecting body text in the res
   assert.equal(output.result.browser_state_changed, false);
   assert.equal(output.result.published, false);
   assert.match(output.result.snapshot.sha256, /^[a-f0-9]{64}$/);
+  assert.match(output.result.actual.structure_sha256, /^[a-f0-9]{64}$/);
   assert.doesNotMatch(JSON.stringify(output.result), /本文です/);
   assert.equal(output.snapshot.text, "概要\n\n本文です。");
   assert.equal(output.snapshot.sha256, output.result.snapshot.sha256);
@@ -153,4 +175,27 @@ test("the default result validator rejects an expired read plan", async () => {
     () => createReadResult(expiredPlan, observation()),
     error => error?.code === "BROWSER_PLAN_EXPIRED"
   );
+});
+
+test("validates a read snapshot's digest, target, mode, and nested schema", async () => {
+  const { assertReadSnapshot, createReadResult } = await loadSut();
+  assert.equal(typeof assertReadSnapshot, "function", "assertReadSnapshot must exist");
+  const output = createReadResult(plan("inspect"), observation(), { validatePlan: value => value });
+
+  assert.deepEqual(assertReadSnapshot(output.snapshot, {
+    expectedRunId: output.snapshot.runId,
+    expectedMode: "inspect"
+  }), output.snapshot);
+  for (const invalid of [
+    { ...output.snapshot, text: "tampered" },
+    { ...output.snapshot, mode: "verify" },
+    { ...output.snapshot, note: { ...output.snapshot.note, key: "n111111111111" } },
+    { ...output.snapshot, structure: [{ type: "element", tag: "script", attrs: {}, children: [] }] },
+    { ...output.snapshot, unexpected: true }
+  ]) {
+    assert.throws(
+      () => assertReadSnapshot(invalid, { expectedRunId: output.snapshot.runId }),
+      error => error?.code === "READ_SNAPSHOT_INVALID"
+    );
+  }
 });

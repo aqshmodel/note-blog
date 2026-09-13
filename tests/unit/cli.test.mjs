@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -63,7 +63,10 @@ async function bindArticle(project, key = "n9b5c6afb2521") {
   const source = await readFile(project.articlePath, "utf8");
   await writeFile(
     project.articlePath,
-    source.replace("status: draft", `status: draft\nnote:\n  key: ${key}`),
+    source.replace(
+      "status: draft",
+      `status: draft\nnote:\n  key: ${key}\n  last_synced_at: "2020-01-01T00:00:00.000Z"`
+    ),
     "utf8"
   );
 }
@@ -74,6 +77,12 @@ function readObservation(overrides = {}) {
     url: "https://editor.note.com/notes/n9b5c6afb2521/edit/",
     title: "CLIテスト",
     text: "これはブラウザを起動しないdry-run用の記事です。",
+    structure: [{
+      type: "element",
+      tag: "p",
+      attrs: {},
+      children: [{ type: "text", value: "これはブラウザを起動しないdry-run用の記事です。" }]
+    }],
     h2: [],
     h3: [],
     imageCount: 0,
@@ -890,4 +899,112 @@ test("only the unimplemented update command remains fail-closed", async () => {
   assert.equal(output.code, "UI_CONTRACT_UNVERIFIED");
   assert.equal(output.browser_launched, false);
   assert.equal(output.published, false);
+});
+
+test("conflict-check allows local edits only when note matches the verified baseline", async () => {
+  const project = await makeProject();
+  await bindArticle(project);
+  const baselinePreparedProcess = spawnSync(
+    process.execPath,
+    [cliPath, "verify", project.articlePath, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+  assert.equal(baselinePreparedProcess.status, 0, baselinePreparedProcess.stderr);
+  const baselinePrepared = JSON.parse(baselinePreparedProcess.stdout);
+  const baselineRecordedProcess = spawnSync(
+    process.execPath,
+    [cliPath, "record-verify", baselinePrepared.plan.path, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8", input: JSON.stringify(readObservation()) }
+  );
+  assert.equal(baselineRecordedProcess.status, 0, baselineRecordedProcess.stderr);
+  const baselineRecorded = JSON.parse(baselineRecordedProcess.stdout);
+
+  const currentPreparedProcess = spawnSync(
+    process.execPath,
+    [
+      cliPath,
+      "inspect",
+      "https://note.com/aqsh/n/n9b5c6afb2521",
+      "--config",
+      project.configPath,
+      "--json"
+    ],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+  assert.equal(currentPreparedProcess.status, 0, currentPreparedProcess.stderr);
+  const currentPrepared = JSON.parse(currentPreparedProcess.stdout);
+  const currentRecordedProcess = spawnSync(
+    process.execPath,
+    [cliPath, "record-inspect", currentPrepared.plan.path, "--config", project.configPath, "--json"],
+    { cwd: project.projectRoot, encoding: "utf8", input: JSON.stringify(readObservation()) }
+  );
+  assert.equal(currentRecordedProcess.status, 0, currentRecordedProcess.stderr);
+  const currentRecorded = JSON.parse(currentRecordedProcess.stdout);
+
+  const source = await readFile(project.articlePath, "utf8");
+  await writeFile(
+    project.articlePath,
+    source.replace("dry-run用の記事です。", "更新予定の記事です。"),
+    "utf8"
+  );
+  const result = spawnSync(
+    process.execPath,
+    [
+      cliPath,
+      "conflict-check",
+      project.articlePath,
+      baselineRecorded.snapshot.path,
+      currentRecorded.snapshot.path,
+      "--config",
+      project.configPath,
+      "--json"
+    ],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.status, "clear");
+  assert.equal(output.action, "conflict-check");
+  assert.equal(output.conflict.detected, false);
+  assert.equal(output.article.source_changed_since_baseline, true);
+  assert.equal(output.article.rendered_content_changed_since_baseline, true);
+  assert.equal(output.article.local_changed_since_baseline, true);
+  assert.equal(output.update_needed, true);
+  assert.equal(output.update_allowed, true);
+  assert.equal(output.browser_launched, false);
+  assert.equal(output.browser_state_changed, false);
+  assert.equal(output.saved, false);
+  assert.equal(output.published, false);
+  assert.doesNotMatch(result.stdout, /dry-run用の記事です|更新予定の記事です/);
+  assert.equal((await stat(output.report.path)).mode & 0o777, 0o600);
+});
+
+test("conflict-check does not leave an empty run when snapshot validation fails", async () => {
+  const project = await makeProject();
+  await bindArticle(project);
+  const missingBaseline = path.join(project.stateDir, "runs", "missing-baseline", "snapshot.json");
+  const missingCurrent = path.join(project.stateDir, "runs", "missing-current", "snapshot.json");
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      cliPath,
+      "conflict-check",
+      project.articlePath,
+      missingBaseline,
+      missingCurrent,
+      "--config",
+      project.configPath,
+      "--json"
+    ],
+    { cwd: project.projectRoot, encoding: "utf8" }
+  );
+
+  assert.equal(result.status, 1);
+  const runs = await readdir(path.join(project.stateDir, "runs"), { withFileTypes: true }).catch(error => {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  });
+  assert.deepEqual(runs.map(entry => entry.name), []);
 });

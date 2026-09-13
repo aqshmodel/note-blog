@@ -70,6 +70,24 @@ assets:
   assert.equal(article.images[0].source, "./images/flow.png");
   assert.equal(article.images[0].exists, true);
   assert.match(article.sourceSha256, /^[a-f0-9]{64}$/);
+  assert.match(article.renderedContentSha256, /^[a-f0-9]{64}$/);
+  assert.equal(article.structure[0].tag, "p");
+  assert.equal(article.structure[1].tag, "h2");
+  assert.equal(article.structure[2].tag, "ul");
+  assert.deepEqual(article.structure.at(-1), {
+    type: "element",
+    tag: "p",
+    attrs: {},
+    children: [
+      {
+        type: "element",
+        tag: "a",
+        attrs: { href: "https://aqsh.co.jp/" },
+        children: [{ type: "text", value: "Aqsh" }]
+      },
+      { type: "text", value: "を確認します。" }
+    ]
+  });
 });
 
 test("uses the first H1 when frontmatter title is absent", async () => {
